@@ -1,0 +1,4 @@
+Preamp 20x
+Highpass 0.05Hz
+Amp 50x
+Lowpass 150Hz

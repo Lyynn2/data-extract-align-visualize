@@ -1,0 +1,1 @@
+touch /home/pi/kill_postip_process.txt

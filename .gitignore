@@ -1,0 +1,56 @@
+########################
+# File types and temps
+########################
+*.jpg
+*.jpeg
+*.png
+*.pyc
+.idea/
+*.xlsx
+*.pptx
+*.csv
+*.pdf
+*.zip
+*.asv
+*.ipynb
+
+########################
+# Data
+########################
+SplashDrone/data/
+**/data/
+**/pictures/
+building_pi_image/outputs/
+
+########################
+# Reference documents
+########################
+ECG/circuits/datasheets and references/
+ECG/notes and reference documents/
+SplashDrone/reference documents/
+
+########################
+# Models
+########################
+*.stl
+*.step
+
+########################
+# Various
+########################
+Update slides/
+Various/
+ECG/circuits/**/purchasing/
+ECG/circuits/**/*.b#*
+ECG/circuits/**/*.s#*
+**/notes/
+*.img
+.github/
+
+ECG/code/pi/temp_fromPi2/
+
+ECG/code/_archived/
+
+
+
+

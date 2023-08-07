@@ -1,0 +1,81 @@
+
+
+11:45:15 baby in mom
+11:53:30 nearing boat
+
+================================
+Comparing in composite after using offsets DG 189 JD 12
+
+DG	39.6 > 14.7
+Phones	54.3 
+JD	52.3 > 2(+12) = 14
+Drone2	52.8 > 1.5
+
+
+Flop on top
+Drone1	52.3 > 0.6
+Drone2	50.6 > 2.3
+Phones	52.9
+JD	50.5 > 2.4(+12) = 14.4
+DG	33.6?> 19.3
+	
+
+================================
+Getting initial offsets by watching separate videos
+
+Mavic1 mouth open:
+  ish: 2:54 from start of 1688831464951 >      1688831638
+
+Mavi2 mouth open:
+  00:33 from start of 1688831602631 >          1688831635
+
+JD mouth open: 
+  18 seconds from end of 11:54:00 > 11:53:42 > 1688831622
+  5:23 from start of 1688831300110 >           1688831623
+
+david mouth open: 
+  1688817034                                 > 1688831434
+
+
+================================
+Checking time zones etc
+
+
+MAVIC
+1688826012
+1688843937
+
+MAVIC
+1688827876
+1688840013
+
+DG
+1688812736	1688827136
+1688831949	1688846349
+
+DSWP 70D
+1688812909
+1688829209
+
+DSWP MIXPRE
+1688828026
+1688844550
+
+JD
+1688823474
+1688843670
+
+JD PHONE
+1688832079
+1688832601
+
+GOPRO
+1688839530
+
+
+David's timestamps end about 2.5 hours before the Mavic's timestamps start
+
+David's timestamps are shifted by 4 hours; I think his epochs were generated assuming his timestamps were UTC instead of -0400 
+
+
+

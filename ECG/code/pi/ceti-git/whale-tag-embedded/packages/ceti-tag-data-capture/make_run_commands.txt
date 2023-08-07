@@ -1,0 +1,19 @@
+cd ~/whale-tag-embedded/packages/ceti-tag-data-capture/
+
+(find src/ -name "*.o" -type f -delete); (rm bin/cetiTagApp); make
+
+
+((sleep 20 && echo "quit" > ipc/cetiCommand) &) && (echo "" > ipc/cetiCommand) && (cd bin; sudo ./cetiTagApp; cd ..)
+
+OR
+
+(cd bin; sudo ./cetiTagApp; cd ..)
+
+
+
+---------------------------------
+
+
+cd ~/whale-tag-embedded/packages/ceti-tag-data-capture/
+(rm src/*.o); (rm src/cetiTagECG_helpers/*.o); (rm bin/cetiTagApp); make
+((sleep 20 && echo "quit" > ipc/cetiCommand) &) && (echo "" > ipc/cetiCommand) && (cd bin; sudo ./cetiTagApp; cd ..)

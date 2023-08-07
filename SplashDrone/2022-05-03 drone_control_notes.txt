@@ -1,0 +1,16 @@
+Calibrate IMU : Left up  , toggle Right side to side
+Calibrate gyro: Left down, toggle Right side to side
+Calibrate comp: toggle mode switch
+
+Drone will not unlock if weak GPS and in GPS mode - use ATTI mode (attitude mode)
+
+Minimum takeoff altitude seems to be 50cm
+
+-----------------------------------------------------
+MANUAL CONTROL
+-----------------------------------------------------
+Unlock with controller: both joysticks down and in
+Left: ascend/descend, turn
+Right: move
+Smooth+: left yaw, right roll (press button then use knob)
+Land/lock with controller: descend, then hold left down or move both down and out
