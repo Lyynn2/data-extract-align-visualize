@@ -45,64 +45,74 @@ def cv2_to_pixmap(cv_image):
   q_image = QImage(cv_image.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
   return QPixmap.fromImage(q_image)
 
+labels = []
 def display_images(grid_layout, cv_images):
-  
+  global labels
   for row in range(2):
     for col in range(2):
       cv_image = cv_images[row * 2 + col]
       draw_text(cv_image, 'hello', pos=(0,-1))
       pixmap = cv2_to_pixmap(cv_image)
       label = QLabel()
-      label.setPixmap(pixmap.scaledToWidth(600))
+      label.setPixmap(pixmap.scaledToWidth(300))
       grid_layout.addWidget(label, row, col)
+      labels.append(label)
 
   return (grid_layout)
 
 if __name__ == "__main__":
   # Replace these paths with the actual paths to your images
   image_paths = [
-    'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/downloaded/DG-CANON_EOS_1DX_MARK_III-1/IMG_4844.1688814707000.JPG',
-    'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/downloaded/DG-CANON_EOS_1DX_MARK_III-1/IMG_5013.1688816685000.JPG',
-    'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/downloaded/DG-CANON_EOS_1DX_MARK_III-1/IMG_5350.1688816917000.JPG',
-    'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/downloaded/DG-CANON_EOS_1DX_MARK_III-1/IMG_6550.1688831948000.JPG',
+    'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/DG-CANON_EOS_1DX_MARK_III-1/IMG_4844.1688814707000.JPG',
+    'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/DG-CANON_EOS_1DX_MARK_III-1/IMG_5013.1688816685000.JPG',
+    'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/DG-CANON_EOS_1DX_MARK_III-1/IMG_5350.1688816917000.JPG',
+    'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/DG-CANON_EOS_1DX_MARK_III-1/IMG_6550.1688831948000.JPG',
   ]
 
   app = QApplication(sys.argv)
-  graphics_layout = pyqtgraph.GraphicsLayoutWidget()
-  # graphics_layout.setGeometry(10, 50, 100, 100)
+  graphics_layout = pyqtgraph.GraphicsLayoutWidget(show=True)
+  graphics_layout.setGeometry(10, 50, 100, 100)
+  graphics_layout.show()
   grid_layout = QtWidgets.QGridLayout()
+  grid_layout.setGeometry(QtCore.QRect(10, 50, 100, 100))
   graphics_layout.setLayout(grid_layout)
   
   # composite_widget.setGeometry(10, 50, composite_frame_width, composite_frame_height)
   # graphics_layout.show()
   vout = None
   cv_images = [cv2.cvtColor(cv2.imread(path), cv2.COLOR_RGB2BGR) for path in image_paths]
-  for i in range(2):
+  exported_img = None
+  for i in range(1):
     t0 = time.time()
     random.shuffle(cv_images)
-    display_images(grid_layout, cv_images)
+    grid_layout = display_images(grid_layout, cv_images)
   
     QtCore.QCoreApplication.processEvents()
     # graphics_layout.show()
     # QtCore.QCoreApplication.processEvents()
     # sys.exit(app.exec())
     
-    # image = QPixmap.grabWindow(window.winId())
+    # exported_image = QPixmap.grabWindow(window.winId())
+    
     # exporter = pyqtgraph.exporters.ImageExporter(graphics_layout.scene())
-    # img = exporter.export(toBytes=True)
-    img = graphics_layout.grab().toImage()
-    img = convertQImageToMat(img)
-    img = np.array(img[:,:,0:3])
+    # exported_img = exporter.export(toBytes=True)
+    # exported_img = convertQImageToMat(exported_img)
+    # exported_img = np.array(exported_img[:,:,0:3])
+
+    exported_img = graphics_layout.grab().toImage()
+    exported_img = convertQImageToMat(exported_img)
+    exported_img = np.array(exported_img[:,:,0:3])
+    
     # w, h = draw_text(img, "hello", pos=(0, 0))
-    print(img.shape)
-    if vout is None:
-      vout = cv2.VideoWriter('filename.avi',
-                             cv2.VideoWriter_fourcc(*'MJPG'),
-                             5, [img.shape[1], img.shape[0]])
-    vout.write(img)
+    # print(img.shape)
+    # if vout is None:
+    #   vout = cv2.VideoWriter('filename.avi',
+    #                          cv2.VideoWriter_fourcc(*'MJPG'),
+    #                          5, [img.shape[1], img.shape[0]])
+    # vout.write(img)
     print(time.time() - t0)
   # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-  vout.release()
-  cv2.imshow('yay', img)
+  # vout.release()
+  cv2.imshow('yay', exported_img)
   cv2.waitKey(0)
 

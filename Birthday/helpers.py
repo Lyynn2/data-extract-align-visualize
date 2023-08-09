@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 import numpy as np
 import cv2
+from PIL import Image
 import pyqtgraph
 from pyqtgraph.Qt.QtGui import QPixmap, QImage
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
@@ -55,6 +56,22 @@ def is_audio(filepath_or_data):
 # IMAGES
 ############################################
 
+# Load an image from file
+def load_image(filepath, target_width=None, target_height=None, method='pil'):
+  img = None
+  if method.lower() == 'opencv':
+    img = cv2.imread(filepath)
+    if target_width is not None and target_height is not None:
+      img = scale_image(img, target_width=target_width, target_height=target_height)
+  elif method.lower() == 'pil':
+    img = Image.open(filepath)
+    if target_width is not None and target_height is not None:
+      img.draft('RGB', (int(target_width*1.5), int(target_height*1.5)))
+    img = np.asarray(img)
+    if target_width is not None and target_height is not None:
+      img = scale_image(img, target_width=target_width, target_height=target_height)
+  return img
+  
 # Convert an OpenCV image to a PyQtGraph Pixmap.
 def cv2_to_pixmap(cv_image):
   height, width, channel = cv_image.shape
@@ -86,16 +103,16 @@ def scale_image(img, target_width, target_height):
                       aspectRatioMode=pyqtgraph.QtCore.Qt.AspectRatioMode.KeepAspectRatio)
 
 # Draw text on an image, with a shaded background.
-# If font_scale is between 0 and 1, will be interpreted as a target width ratio of the image width.
 # If the y position is -1, will place the text at the bottom of the image.
 # If the x position is -1, will place the text at the left of the image.
 def draw_text_on_image(img, text, pos=(0, 0),
-                       font_scale=8, font_thickness=1, font=cv2.FONT_HERSHEY_PLAIN,
+                       font_scale=8, text_width_ratio=None,
+                       font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX,
                        text_color=(255, 255, 255), text_bg_color=(100, 100, 100)
                        ):
   # If desired, compute a font scale based on the target width ratio.
-  if font_scale < 1:
-    target_text_w = font_scale * img.shape[1]
+  if text_width_ratio is not None:
+    target_text_w = text_width_ratio * img.shape[1]
     font_scale = 0
     text_w = 0
     while text_w < target_text_w:

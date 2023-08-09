@@ -49,10 +49,10 @@ localtime_offset_str = '-0400'
 
 # Specify offsets to add to timestamps extracted from filenames.
 epoch_offsets_toAdd_s = {
-  'CETI-DJI_MAVIC3-1'          : 0,
-  'DSWP-DJI_MAVIC3-2'          : 1.5, # 1.5 is estimated from images of the open mouth and baby flop near the boat (compared to the phones as ground truth)
-  'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 189 + 15, # 189+15 is estimated from images of the open mouth and baby flop near the boat (compared to the phones as ground truth)
-  'JD-CANON_REBEL_T5I'         : 13.5, # 13.5 is estimated from images of the open mouth and baby flop near the boat (compared to the phones as ground truth)
+  'CETI-DJI_MAVIC3-1'          : 0.67,
+  'DSWP-DJI_MAVIC3-2'          : 2.17,
+  'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 204,
+  'JD-CANON_REBEL_T5I'         : 14.28,
   'DSWP-CANON_EOS_70D-1'       : 4*3600,
   'DSWP-KASHMIR_MIXPRE6-1'     : 0,
   'Misc/Aluma'                 : 0,
@@ -88,8 +88,9 @@ device_friendlyNames = {
 #   11:45:48 see blood in water
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
-output_video_start_time_str = '2023-07-08 11:53:45 -0400'
-output_video_duration_s = 10
+# output_video_start_time_str = '2023-07-08 11:53:45 -0400'
+output_video_start_time_str = '2023-07-08 11:35:00 -0400'
+output_video_duration_s = 50*60
 output_video_fps = 10
 show_visualization_window = False
 debug_composite_layout = False # Will show the layout with dummy data and then exit
@@ -108,8 +109,8 @@ audio_resample_rate_hz = 9600 # original rate is 96000
 audio_plot_duration_beforeCurrentTime_s = 5
 audio_plot_duration_afterCurrentTime_s  = 10
 num_audio_channels_toPlot = 1
-audio_plot_pens = [pyqtgraph.mkPen([255, 255, 255], width=1),
-                   pyqtgraph.mkPen([255, 0, 255], width=2)]
+audio_plot_pens = [pyqtgraph.mkPen([255, 255, 255], width=4),
+                   pyqtgraph.mkPen([255, 0, 255], width=1)]
 
 # Configure how device timestamps are matched with output video frame timestamps.
 timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
@@ -130,7 +131,7 @@ output_video_banner_textSize  = None # will be determined later once the font sc
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
 output_video_filepath = os.path.join(data_dir_root,
-                                     'composite_video_testing5_fps%d_duration%d_start%d_colWidth%d.mp4'
+                                     'composite_video_fps%d_duration%d_start%d_colWidth%d.mp4'
                                      % (output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
                                         composite_layout_column_width))
@@ -190,7 +191,7 @@ def add_timestamp_banner(img, timestamp_s):
                                   timestamp_s)
   
   # Compute the size of the text that will be drawn on the image.
-  fontFace = cv2.FONT_HERSHEY_SIMPLEX
+  fontFace = cv2.FONT_HERSHEY_DUPLEX # cv2.FONT_HERSHEY_SIMPLEX
   fontThickness = 2 if output_video_banner_height > 25 else 1
   if output_video_banner_fontScale is None:
     # If this is the first time, compute a font size to use.
@@ -271,6 +272,8 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
       timestamps_s = np.array([start_time_s])
       media_infos[device_id][filepath] = (timestamps_s, filepath)
     elif is_audio(filepath):
+      # if '1688831582000' not in filepath:
+      #   continue
       (audio_rate, audio_data) = wavfile.read(filepath)
       # Resample the data.
       num_samples = audio_data.shape[0]
@@ -311,13 +314,14 @@ output_video_timestamps_s = output_video_start_time_s \
 def update_layout_widget(layout_widget, layout_specs, data, label=None):
   if is_image(data):
     # Scale the image to the size specified by the subplots it occupies.
-    (row, col, rowspan, colspan) = layout_specs
-    data = scale_image(data, target_width=composite_layout_column_width*colspan,
-                             target_height=composite_layout_row_height*rowspan)
+    # (row, col, rowspan, colspan) = layout_specs
+    # data = scale_image(data, target_width=composite_layout_column_width*colspan,
+    #                          target_height=composite_layout_row_height*rowspan)
     # Draw text on the image if desired.
     # Note that this is done after scaling, since scaling the text could make it unreadable.
     if label is not None:
-      draw_text_on_image(data, label, pos=(0,-1), font_scale=1)
+      draw_text_on_image(data, label, pos=(0,-1),
+                         font_scale=0.5, font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX)
     # Update the subplot with the image.
     pixmap = cv2_to_pixmap(data)
     layout_widget.setPixmap(pixmap)
@@ -350,6 +354,7 @@ graphics_layout.setLayout(grid_layout)
 # Initialize the visualizations for each stream.
 for (device_friendlyName, layout_specs) in composite_layout.items():
   device_id = device_friendlyName_to_id(device_friendlyName)
+  (row, col, rowspan, colspan) = layout_specs
   # If a widget has already been created for this subplot location, just use that one for this device too.
   if str(layout_specs) in layout_widgets:
     continue
@@ -361,12 +366,18 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   if is_video(example_filepath) or is_image(example_filepath):
     if is_video(example_filepath):
       success, example_image = example_data.read()
+      example_image = scale_image(example_image,
+                                  target_width=composite_layout_column_width*colspan,
+                                  target_height=composite_layout_row_height*rowspan)
     elif is_image(example_filepath):
-      example_image = cv2.imread(example_filepath)
+      example_image = load_image(example_filepath,
+                                 target_width=composite_layout_column_width*colspan,
+                                 target_height=composite_layout_row_height*rowspan)
     else:
       raise AssertionError('Thought it was a video or image, but apparently not')
     # Create a gray image the size of the real image that can be used to see the composite layout.
     blank_image = 100*np.ones_like(example_image)
+    print('blank image shape', device_friendlyName, blank_image.shape)
     # Create a widget to show the image, that is set to the target height.
     image_labelWidget = QtWidgets.QLabel()
     grid_layout.addWidget(image_labelWidget, *layout_specs,
@@ -419,6 +430,7 @@ duration_s_pyqt_audio = 0
 duration_s_getIndex = 0
 duration_s_readImages = 0
 readImages_count = 0
+readVideos_count = 0
 duration_s_readVideos = 0
 duration_s_audioParsing = 0
 duration_s_exportFrame = 0
@@ -429,6 +441,7 @@ composite_video_writer = None
 last_status_time_s = 0
 layouts_updated = {}
 layouts_showing_dummyData = dict([(str(layout_specs), False) for layout_specs in composite_layout.values()])
+layouts_prevState = dict([(str(layout_specs), None) for layout_specs in composite_layout.values()])
 start_loop_time_s = time.time()
 for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Print periodic status updates.
@@ -447,6 +460,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   #  in that case the last device with data for this timestep will be used.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     device_id = device_friendlyName_to_id(device_friendlyName)
+    (row, col, rowspan, colspan) = layout_specs
     media_file_infos = media_infos[device_id]
     # For each media file associated with this device, see if it has data for this timestep.
     # Note that the device may have multiple images that match this timestamp, but only the first will be used.
@@ -458,18 +472,28 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         data_index = get_index_for_time_s(timestamps_s, current_time_s, timestamp_to_target_thresholds_s['video'])
         duration_s_getIndex += time.time() - t0
         if data_index is not None:
+          # Only spend time loading data and updating the plot if it changed since last frame.
+          if (filepath, data_index) == layouts_prevState[str(layout_specs)]:
+            layouts_updated[str(layout_specs)] = True
+            layouts_showing_dummyData[str(layout_specs)] = False
+            break # don't check any more media for this device
           # Read the video frame at the desired index.
           t0 = time.time()
           data.set(cv2.CAP_PROP_POS_FRAMES, data_index) # should this be data_index-1? A bit unclear from documentation/examples
           success, img = data.read()
           if success:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # OpenCV uses BGR, but PyQtGraph uses RGB
+            img = scale_image(img,
+                              target_width=composite_layout_column_width*colspan,
+                              target_height=composite_layout_row_height*rowspan)
             duration_s_readVideos += time.time() - t0
+            readVideos_count += 1
             # Update the subplot with the video frame.
             t0 = time.time()
             update_layout_widget(layout_widgets[str(layout_specs)], layout_specs, img, label=device_friendlyName)
             layouts_updated[str(layout_specs)] = True
             layouts_showing_dummyData[str(layout_specs)] = False
+            layouts_prevState[str(layout_specs)] = (filepath, data_index)
             duration_s_pyqt += time.time() - t0
             break # don't check any more media for this device
       # Handle photos.
@@ -479,10 +503,16 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         data_index = get_index_for_time_s(timestamps_s, current_time_s, timestamp_to_target_thresholds_s['image'])
         duration_s_getIndex += time.time() - t0
         if data_index is not None:
+          # Only spend time loading data and updating the plot if it changed since last frame.
+          if (filepath, data_index) == layouts_prevState[str(layout_specs)]:
+            layouts_updated[str(layout_specs)] = True
+            layouts_showing_dummyData[str(layout_specs)] = False
+            break # don't check any more media for this device
           # Read the desired photo.
           t0 = time.time()
-          img = cv2.imread(filepath)
-          img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # OpenCV uses BGR, but PyQtGraph uses RGB
+          img = load_image(filepath,
+                           target_width=composite_layout_column_width*colspan,
+                           target_height=composite_layout_row_height*rowspan)
           duration_s_readImages += time.time() - t0
           readImages_count += 1
           # Update the subplot with the photo.
@@ -490,6 +520,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           update_layout_widget(layout_widgets[str(layout_specs)], layout_specs, img, label=device_friendlyName)
           layouts_updated[str(layout_specs)] = True
           layouts_showing_dummyData[str(layout_specs)] = False
+          layouts_prevState[str(layout_specs)] = (filepath, data_index)
           duration_s_pyqt += time.time() - t0
           break # don't check any more media for this device
       # Handle audio.
@@ -499,6 +530,11 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         data_index = get_index_for_time_s(timestamps_s, current_time_s, timestamp_to_target_thresholds_s['audio'])
         duration_s_getIndex += time.time() - t0
         if data_index is not None:
+          # Only spend time loading data and updating the plot if it changed since last frame.
+          if (filepath, data_index) == layouts_prevState[str(layout_specs)]:
+            layouts_updated[str(layout_specs)] = True
+            layouts_showing_dummyData[str(layout_specs)] = False
+            break # don't check any more media for this device
           t0 = time.time()
           # Get the audio rate and number of channels.
           audio_sps = round((timestamps_s.shape[0]-1)/(timestamps_s[-1] - timestamps_s[0])) # NOTE: using first/last indexes is much faster than using max/min
@@ -524,6 +560,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           update_layout_widget(layout_widgets[str(layout_specs)], layout_specs, data_toPlot)
           layouts_updated[str(layout_specs)] = True
           layouts_showing_dummyData[str(layout_specs)] = False
+          layouts_prevState[str(layout_specs)] = (filepath, data_index)
           duration_s_pyqt += time.time() - t0
           duration_s_pyqt_audio += time.time() - t0
           break # don't check any more media for this device
@@ -537,6 +574,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
       update_layout_widget(layout_widgets[str(layout_specs)], layout_specs, dummy_datas[str(layout_specs)])
       layouts_showing_dummyData[str(layout_specs)] = True
       duration_s_pyqt += time.time() - t0
+      layouts_prevState[str(layout_specs)] = None
   
   # Refresh the figure with the updated subplots.
   t0 = time.time()
@@ -545,12 +583,12 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   
   # Render the figure into a composite frame image.
   t0 = time.time()
-  img = graphics_layout.grab().toImage()
-  img = qimage_to_numpy(img)
-  img = np.array(img[:,:,0:3])
+  exported_img = graphics_layout.grab().toImage()
+  exported_img = qimage_to_numpy(exported_img)
+  exported_img = np.array(exported_img[:,:,0:3])
   duration_s_exportFrame += time.time() - t0
   # Add a banner with the current timestamp.
-  img = add_timestamp_banner(img, current_time_s)
+  exported_img = add_timestamp_banner(exported_img, current_time_s)
   # Write the frame to the output video.
   if output_video_filepath is not None:
     t0 = time.time()
@@ -558,8 +596,8 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
     if composite_video_writer is None:
       composite_video_writer = cv2.VideoWriter(output_video_filepath,
                                                cv2.VideoWriter_fourcc(*'MJPG') if '.avi' in output_video_filepath.lower() else cv2.VideoWriter_fourcc(*'MP4V'),
-                                               output_video_fps, [img.shape[1], img.shape[0]])
-    composite_video_writer.write(img)
+                                               output_video_fps, [exported_img.shape[1], exported_img.shape[0]])
+    composite_video_writer.write(exported_img)
     duration_s_writeFrame += time.time() - t0
 
 # All done!
@@ -596,7 +634,7 @@ print('  PyQt        : %6.2f%% (%0.3f seconds)' % (100*duration_s_pyqt/total_dur
 print('  PyQt (audio): %6.2f%% (%0.3f seconds)' % (100*duration_s_pyqt_audio/total_duration_s, duration_s_pyqt_audio))
 print('  GetIndex    : %6.2f%% (%0.3f seconds)' % (100*duration_s_getIndex/total_duration_s, duration_s_getIndex))
 print('  ReadImages  : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readImages/total_duration_s, duration_s_readImages, readImages_count))
-print('  ReadVideos  : %6.2f%% (%0.3f seconds)' % (100*duration_s_readVideos/total_duration_s, duration_s_readVideos))
+print('  ReadVideos  : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readVideos/total_duration_s, duration_s_readVideos, readVideos_count))
 print('  ParseAudio  : %6.2f%% (%0.3f seconds)' % (100*duration_s_audioParsing/total_duration_s, duration_s_audioParsing))
 print('  ExportFrame : %6.2f%% (%0.3f seconds)' % (100*duration_s_exportFrame/total_duration_s, duration_s_exportFrame))
 print('  WriteFrame  : %6.2f%% (%0.3f seconds)' % (100*duration_s_writeFrame/total_duration_s, duration_s_writeFrame))
