@@ -3,11 +3,13 @@ import os
 import glob
 import re
 import time
+from collections import OrderedDict
 
 import numpy as np
 from scipy.io import wavfile
 from scipy import interpolate
-from collections import OrderedDict
+from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
+import proglog
 
 import cv2
 import pyqtgraph
@@ -88,16 +90,20 @@ device_friendlyNames = {
 #   11:45:48 see blood in water
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
-# output_video_start_time_str = '2023-07-08 11:53:45 -0400'
-output_video_start_time_str = '2023-07-08 11:35:00 -0400'
-output_video_duration_s = 50*60
+output_video_start_time_str = '2023-07-08 11:53:45 -0400'
+# output_video_start_time_str = '2023-07-08 11:35:00 -0400'
+output_video_duration_s = 10
 output_video_fps = 10
-show_visualization_window = False
-debug_composite_layout = False # Will show the layout with dummy data and then exit
 
-# Define the output video size/resolution.
+# Define the output video size/resolution and compression.
 composite_layout_column_width = 300 # also defines the scaling/resolution of photos/videos
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
+output_video_compressed_rate_MB_s = 0.5 # None to not compress the video
+
+# Define audio track added to the output video.
+add_audio_track_to_output_video = True
+output_audio_track_volume_gain_factor = 50 # 1 to not change volume
+save_audio_track_as_separate_file = True
 
 # Specify annotations on the output video.
 output_video_banner_height_fraction = 0.03 # fraction of the final composite frame
@@ -118,6 +124,10 @@ timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_cu
   'audio': (1/output_video_fps*0.5, 1/output_video_fps*0.5),
   'image': (1, 1/output_video_fps), # first entry controls how long an image will be shown
 }
+
+# Visualization debugging options.
+show_visualization_window = False
+debug_composite_layout = False # Will show the layout with dummy data and then exit
 
 # Derived configurations.
 audio_plot_length_beforeCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_beforeCurrentTime_s)
@@ -252,10 +262,10 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
     data_dir = os.path.join(data_dir_root, device_id)
     filepaths = glob.glob(os.path.join(data_dir, '*'))
   filepaths = [filepath for filepath in filepaths if not os.path.isdir(filepath)]
-  print(' See %4d files for device [%s]' % (len(filepaths), device_friendlyName))
+  print('  See %4d files for device [%s]' % (len(filepaths), device_friendlyName))
   
   # Loop through each file to extract its timestamps and data pointers.
-  for filepath in filepaths:
+  for (file_index, filepath) in enumerate(filepaths):
     # Get the start time in epoch time
     filename = os.path.basename(filepath)
     start_time_ms = int(re.search('\d{13}', filename)[0])
@@ -272,8 +282,9 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
       timestamps_s = np.array([start_time_s])
       media_infos[device_id][filepath] = (timestamps_s, filepath)
     elif is_audio(filepath):
-      # if '1688831582000' not in filepath:
-      #   continue
+      if file_index > 0:
+        print('\r', end='')
+      print('    Loading and resampling file %2d/%2d     ' % (file_index+1, len(filepaths)), end='')
       (audio_rate, audio_data) = wavfile.read(filepath)
       # Resample the data.
       num_samples = audio_data.shape[0]
@@ -289,6 +300,8 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
       timestamps_s_resampled = start_time_s + np.arange(start=0, stop=num_samples)/audio_resample_rate_hz
       audio_data_resampled = fn_interpolate_audio(timestamps_s_resampled)
       media_infos[device_id][filepath] = (timestamps_s_resampled, audio_data_resampled)
+      if file_index == len(filepaths)-1:
+        print()
 
 
 ######################################################
@@ -377,7 +390,6 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
       raise AssertionError('Thought it was a video or image, but apparently not')
     # Create a gray image the size of the real image that can be used to see the composite layout.
     blank_image = 100*np.ones_like(example_image)
-    print('blank image shape', device_friendlyName, blank_image.shape)
     # Create a widget to show the image, that is set to the target height.
     image_labelWidget = QtWidgets.QLabel()
     grid_layout.addWidget(image_labelWidget, *layout_specs,
@@ -445,16 +457,16 @@ layouts_prevState = dict([(str(layout_specs), None) for layout_specs in composit
 start_loop_time_s = time.time()
 for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Print periodic status updates.
-  if time.time() - last_status_time_s > 5:
+  if time.time() - last_status_time_s > 10:
     print(' Processing frame %6d/%6d (%0.2f%%) for time %10d (%s)' %
           (frame_index+1, output_video_num_frames, 100*(frame_index+1)/output_video_num_frames,
            current_time_s, time_s_to_str(current_time_s, localtime_offset_s, localtime_offset_str)))
     last_status_time_s = time.time()
-  
+
   # Mark that no subplot layouts have been updated.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     layouts_updated[str(layout_specs)] = False
-  
+
   # Loop through each specified device stream.
   # Note that multiple devices may be mapped to the same layout position;
   #  in that case the last device with data for this timestep will be used.
@@ -564,7 +576,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           duration_s_pyqt += time.time() - t0
           duration_s_pyqt_audio += time.time() - t0
           break # don't check any more media for this device
-  
+
   # If a layout was not updated, show its dummy data.
   # But only spend time updating it if it isn't already showing dummy data.
   for (device_friendlyName, layout_specs) in composite_layout.items():
@@ -575,12 +587,12 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
       layouts_showing_dummyData[str(layout_specs)] = True
       duration_s_pyqt += time.time() - t0
       layouts_prevState[str(layout_specs)] = None
-  
+
   # Refresh the figure with the updated subplots.
   t0 = time.time()
   QtCore.QCoreApplication.processEvents()
   duration_s_pyqt += time.time() - t0
-  
+
   # Render the figure into a composite frame image.
   t0 = time.time()
   exported_img = graphics_layout.grab().toImage()
@@ -603,7 +615,8 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
 # All done!
 total_duration_s = time.time() - start_loop_time_s
 print()
-print('Done!')
+print('Generated composite video in %d seconds' % total_duration_s)
+print()
 
 # Release the output video.
 if composite_video_writer is not None:
@@ -638,6 +651,99 @@ print('  ReadVideos  : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_rea
 print('  ParseAudio  : %6.2f%% (%0.3f seconds)' % (100*duration_s_audioParsing/total_duration_s, duration_s_audioParsing))
 print('  ExportFrame : %6.2f%% (%0.3f seconds)' % (100*duration_s_exportFrame/total_duration_s, duration_s_exportFrame))
 print('  WriteFrame  : %6.2f%% (%0.3f seconds)' % (100*duration_s_writeFrame/total_duration_s, duration_s_writeFrame))
+print()
+
+######################################################
+# COMPRESS THE VIDEO
+######################################################
+
+if output_video_compressed_rate_MB_s is not None:
+  print('Compressing the output video to %g MB/s (total target size: %0.2f MB)'
+        % (output_video_compressed_rate_MB_s, output_video_compressed_rate_MB_s*output_video_duration_s))
+  t0 = time.time()
+  output_video_compressed_filepath = '%s_compressed%sMBs%s' \
+                                      % (os.path.splitext(output_video_filepath)[0],
+                                         ('%0.2f' % output_video_compressed_rate_MB_s).replace('.','-'),
+                                         os.path.splitext(output_video_filepath)[1])
+  compress_video(output_video_filepath, output_video_compressed_filepath,
+                 output_video_compressed_rate_MB_s*1024*1024*8)
+  print('Compression completed in %0.3f seconds' % (time.time() - t0))
+  print()
+  output_video_filepath = output_video_compressed_filepath
+
+######################################################
+# ADD AUDIO TO THE VIDEO
+######################################################
+
+if add_audio_track_to_output_video:
+  # Open a handle to the newly created composite video.
+  output_video_clip = VideoFileClip(output_video_filepath, audio=False)
+  
+  # Find audio files that overlap with the video.
+  print('Searching for audio files that overlap with the composite video')
+  audio_clips = []
+  for (device_id, media_file_infos) in media_infos.items():
+    for filepath in media_file_infos.keys():
+      if not is_audio(filepath):
+        continue
+      # Get the start/end/duration of the audio file.
+      audio_filename = os.path.basename(filepath)
+      audio_start_time_ms = int(re.search('\d{13}', audio_filename)[0])
+      audio_start_time_s = audio_start_time_ms/1000.0
+      audio_start_time_s += epoch_offsets_toAdd_s[device_id]
+      (audio_rate, audio_data) = wavfile.read(filepath)
+      audio_duration_s = (audio_data.shape[0]-1)/audio_rate
+      audio_end_time_s = audio_start_time_s + audio_duration_s
+      
+      audio_clip = None
+      # Compute how far into the audio clip the video clip starts.
+      # Being negative would imply the audio starts inside video, so the audio start should not be clipped.
+      audio_clip_start_offset_s = max(0.0, output_video_start_time_s - audio_start_time_s)
+      # Compute the duration of the audio that would align it with the end of the video.
+      # Being longer than the audio duration implies the audio ends inside the video, so the audio end should not be clipped.
+      audio_clip_duration_s = min(audio_duration_s, (output_video_start_time_s+output_video_duration_s) - audio_start_time_s)
+      audio_clip_duration_s -= audio_clip_start_offset_s
+      # Load the audio segment if it is valid (if the audio file overlaps with the video).
+      if audio_clip_duration_s > 0:
+        audio_clip = AudioFileClip(filepath).subclip(t_start=audio_clip_start_offset_s,
+                                                           t_end=audio_clip_start_offset_s+audio_clip_duration_s)
+        
+        # Compute the video time at which this audio clip should start.
+        audio_clip_start_time_s = audio_start_time_s + audio_clip_start_offset_s
+        audio_video_start_offset_s = audio_clip_start_time_s - output_video_start_time_s
+        audio_clip = audio_clip.set_start(audio_video_start_offset_s)
+        print('  Found %s spanning [%d, %d] > placed segment [%6.1f, %6.1f] at video time %5ds'
+              % (audio_filename, audio_start_time_s, audio_end_time_s,
+                 audio_clip_start_offset_s, audio_clip_start_offset_s+audio_clip_duration_s,
+                 audio_video_start_offset_s))
+        
+        # Store the audio clip.
+        audio_clips.append(audio_clip)
+  
+  # Create the composite audio.
+  print('  Adding %d audio clips to the video' % (len(audio_clips)))
+  t0 = time.time()
+  composite_audio_clip = CompositeAudioClip(audio_clips)
+  composite_audio_clip = composite_audio_clip.volumex(output_audio_track_volume_gain_factor)
+  output_video_clip = output_video_clip.set_audio(composite_audio_clip)
+  output_video_withAudio_filepath = '%s_withAudio%s' % os.path.splitext(output_video_filepath)
+  output_video_clip.write_videofile(output_video_withAudio_filepath,
+                                    verbose=False,
+                                    logger=proglog.TqdmProgressBarLogger(print_messages=False),
+                                    # codec='libx264',
+                                    audio_codec='aac',
+                                    temp_audiofile='%s.m4a' % os.path.splitext(output_video_filepath)[0],
+                                    remove_temp=(not save_audio_track_as_separate_file),
+                                    )
+  print('Audio track added in %0.3f seconds' % (time.time() - t0))
+  print()
+
+######################################################
+# EXIT
+######################################################
+
+print()
+print('Done!')
 print()
 print()
 

@@ -1,10 +1,13 @@
 
+import cv2
+from PIL import Image
+import ffmpeg
+
 import dateutil.parser
 from datetime import datetime
 import os
 import numpy as np
-import cv2
-from PIL import Image
+
 import pyqtgraph
 from pyqtgraph.Qt.QtGui import QPixmap, QImage
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
@@ -53,7 +56,7 @@ def is_audio(filepath_or_data):
   return get_file_extension(filepath_or_data) in ['.wav']
 
 ############################################
-# IMAGES
+# IMAGES / VIDEOS
 ############################################
 
 # Load an image from file
@@ -134,6 +137,60 @@ def draw_text_on_image(img, text, pos=(0, 0),
   # Draw the text.
   cv2.putText(img, text, (x, int(y + text_h + font_scale - 1)),
               font, font_scale, text_color, font_thickness)
+
+# Compress a video to the target bitrate.
+# The target bitrate in bits per second will include both video and audio.
+def compress_video(input_filepath, output_filepath, target_total_bitrate_b_s):
+  # Reference: https://en.wikipedia.org/wiki/Bit_rate#Encoding_bit_rate
+  min_audio_bitrate = 32000
+  max_audio_bitrate = 256000
+  
+  # Open a probe to the input video.
+  probe = ffmpeg.probe(input_filepath)
+  
+  # Check if ausio will be included.
+  audio_streams = [s for s in probe['streams'] if s['codec_type'] == 'audio']
+  if len(audio_streams) > 0:
+    audio_bitrate = sum(float(audio_stream['bit_rate']) for audio_stream in audio_streams)
+    
+    if 10 * audio_bitrate > target_total_bitrate_b_s:
+      audio_bitrate = target_total_bitrate_b_s / 10
+    if audio_bitrate < min_audio_bitrate < target_total_bitrate_b_s:
+      audio_bitrate = min_audio_bitrate
+    elif audio_bitrate > max_audio_bitrate:
+      audio_bitrate = max_audio_bitrate
+    
+    video_bitrate = target_total_bitrate_b_s - audio_bitrate
+  else:
+    audio_bitrate = None
+    video_bitrate = target_total_bitrate_b_s
+  
+  # Compress!
+  i = ffmpeg.input(input_filepath)
+  # Pass 1
+  ffmpeg_args = {
+    'c:v': 'libx264',
+    'b:v': video_bitrate,
+    'pass': 1,
+    'f': 'mp4',
+    'loglevel':'quiet',
+  }
+  ffmpeg.output(i, os.devnull,
+                **ffmpeg_args
+                ).overwrite_output().run()
+  # Pass 2
+  ffmpeg_args = {
+    'c:v': 'libx264',
+    'b:v': video_bitrate,
+    'pass': 2,
+    'c:a': 'aac',
+    'loglevel': 'quiet',
+  }
+  if len(audio_streams) > 0:
+    ffmpeg_args['b:a'] = audio_bitrate
+  ffmpeg.output(i, output_filepath,
+                **ffmpeg_args
+                ).overwrite_output().run()
 
 
 
