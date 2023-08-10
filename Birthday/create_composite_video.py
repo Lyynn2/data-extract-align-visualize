@@ -12,6 +12,7 @@ from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
 import proglog
 
 import cv2
+import decord
 import pyqtgraph
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from pyqtgraph.Qt.QtGui import QPixmap, QImage
@@ -90,9 +91,10 @@ device_friendlyNames = {
 #   11:45:48 see blood in water
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
-output_video_start_time_str = '2023-07-08 11:53:45 -0400'
+output_video_start_time_str = '2023-07-08 11:48:45 -0400'
+# output_video_start_time_str = '2023-07-08 11:53:45 -0400'
 # output_video_start_time_str = '2023-07-08 11:35:00 -0400'
-output_video_duration_s = 10
+output_video_duration_s = 750
 output_video_fps = 10
 
 # Define the output video size/resolution and compression.
@@ -273,9 +275,10 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
     start_time_s += epoch_offsets_toAdd_s[device_id]
     # Process the data/timestamps.
     if is_video(filepath):
-      video_reader = cv2.VideoCapture(filepath)
-      frame_duration_s = 1/video_reader.get(cv2.CAP_PROP_FPS)
-      num_frames = int(video_reader.get(cv2.CAP_PROP_FRAME_COUNT))
+      (row, col, rowspan, colspan) = composite_layout[device_friendlyName]
+      (video_reader, frame_rate, num_frames) = get_video_reader(filepath,
+                                                                target_width=colspan*composite_layout_column_width)
+      frame_duration_s = 1/frame_rate
       timestamps_s = start_time_s + np.arange(start=0, stop=num_frames)*frame_duration_s
       media_infos[device_id][filepath] = (timestamps_s, video_reader)
     elif is_image(filepath):
@@ -378,10 +381,9 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   # Create a layout based on the data type.
   if is_video(example_filepath) or is_image(example_filepath):
     if is_video(example_filepath):
-      success, example_image = example_data.read()
-      example_image = scale_image(example_image,
-                                  target_width=composite_layout_column_width*colspan,
-                                  target_height=composite_layout_row_height*rowspan)
+      success, example_image = load_frame(video_reader, 0,
+                                          target_width=composite_layout_column_width*colspan,
+                                          target_height=composite_layout_row_height*rowspan)
     elif is_image(example_filepath):
       example_image = load_image(example_filepath,
                                  target_width=composite_layout_column_width*colspan,
@@ -491,13 +493,11 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
             break # don't check any more media for this device
           # Read the video frame at the desired index.
           t0 = time.time()
-          data.set(cv2.CAP_PROP_POS_FRAMES, data_index) # should this be data_index-1? A bit unclear from documentation/examples
-          success, img = data.read()
+          success, img = load_frame(data, data_index,
+                                    target_width=composite_layout_column_width*colspan,
+                                    target_height=composite_layout_row_height*rowspan)
+          
           if success:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # OpenCV uses BGR, but PyQtGraph uses RGB
-            img = scale_image(img,
-                              target_width=composite_layout_column_width*colspan,
-                              target_height=composite_layout_row_height*rowspan)
             duration_s_readVideos += time.time() - t0
             readVideos_count += 1
             # Update the subplot with the video frame.

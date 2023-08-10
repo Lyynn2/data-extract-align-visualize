@@ -1,5 +1,6 @@
 
 import cv2
+import decord
 from PIL import Image
 import ffmpeg
 
@@ -74,6 +75,42 @@ def load_image(filepath, target_width=None, target_height=None, method='pil'):
     if target_width is not None and target_height is not None:
       img = scale_image(img, target_width=target_width, target_height=target_height)
   return img
+
+# Open a video file.
+# target_width is only used for the 'decord' method
+def get_video_reader(filepath, target_width=None, method='decord'):
+  video_reader = None
+  frame_rate = None
+  num_frames = None
+  if method.lower() == 'opencv':
+    video_reader = cv2.VideoCapture(filepath)
+    frame_rate = video_reader.get(cv2.CAP_PROP_FPS)
+    num_frames = int(video_reader.get(cv2.CAP_PROP_FRAME_COUNT))
+  elif method.lower() == 'decord':
+    video_reader = decord.VideoReader(filepath)
+    if target_width is not None:
+      frame_shape = video_reader[0].asnumpy().shape
+      target_height = int(frame_shape[0]/frame_shape[1]*target_width)
+      video_reader = decord.VideoReader(filepath, width=target_width, height=target_height)
+    frame_rate = video_reader.get_avg_fps()
+    num_frames = len(video_reader)
+  return (video_reader, frame_rate, num_frames)
+  
+# Load a specified frame from a video reader
+def load_frame(video_reader, frame_index, target_width=None, target_height=None, method='decord'):
+  success = False
+  img = None
+  if method.lower() == 'opencv':
+    video_reader.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+    success, img = video_reader.read()
+    if success and (target_width is not None and target_height is not None):
+      img = scale_image(img, target_width=target_width, target_height=target_height)
+  elif method.lower() == 'decord':
+    img = video_reader[frame_index].asnumpy()
+    success = (img is not None)
+    if success and (target_width is not None and target_height is not None):
+      img = scale_image(img, target_width=target_width, target_height=target_height)
+  return (success, img)
   
 # Convert an OpenCV image to a PyQtGraph Pixmap.
 def cv2_to_pixmap(cv_image):
@@ -97,6 +134,8 @@ def scale_image(img, target_width, target_height):
   if isinstance(img, np.ndarray):
     img_width = img.shape[1]
     img_height = img.shape[0]
+    if img_width == target_width and img_height == target_height:
+      return img
     scale_factor_byWidth = target_width/img_width
     scale_factor_byHeight = target_height/img_height
     scale_factor = min(scale_factor_byWidth, scale_factor_byHeight)
