@@ -29,9 +29,9 @@ num_audio_channels = 1
 audio_pens = [pyqtgraph.mkPen([255, 255, 255], width=1),
               pyqtgraph.mkPen([255, 0, 255], width=1)]
 
-audio_resample_rate_hz = 9600 # original rate is 96000
-audio_plot_duration_beforeCurrentTime_s = 5
-audio_plot_duration_afterCurrentTime_s  = 10
+audio_resample_rate_hz = 48000 # original rate is 96000
+audio_plot_duration_beforeCurrentTime_s = 2
+audio_plot_duration_afterCurrentTime_s  = 8
 
 audio_plot_length_beforeCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_beforeCurrentTime_s)
 audio_plot_length_afterCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_afterCurrentTime_s)
@@ -72,7 +72,11 @@ if only_plot_one_test and use_waveform:
   app = QtWidgets.QApplication([])
   start_index = int(160*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
   end_index = int(160*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
+  # start_index = 0
+  # end_index = audio_data.shape[0]-1
+  t0 = time.time()
   pyqtgraph.plot(np.array(range(start_index, end_index))/audio_resample_rate_hz, audio_data[start_index:end_index, 0])
+  print(time.time() - t0)
   app.exec()
   import sys
   sys.exit()
@@ -177,24 +181,31 @@ grid_layout = QtWidgets.QGridLayout()
 graphics_layout.setLayout(grid_layout)
 
 layout_specs = (4, 0, 1, 4)
-composite_layout_column_width = 50
-composite_layout_column_height = composite_layout_column_width/(1+7/9)
+composite_layout_column_width = 300
+composite_layout_row_height = composite_layout_column_width / (1 + 7 / 9)
 
 audio_plotWidget = pyqtgraph.PlotWidget()
 grid_layout.addWidget(audio_plotWidget, *layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
-grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_column_height)
+grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
 audio_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
 random_audio = np.random.rand(audio_plot_length, 2)
 if use_waveform:
   h_lines = []
   for channel_index in range(num_audio_channels):
     h_lines.append(audio_plotWidget.plot(audio_timestamps_toPlot_s, random_audio[:,channel_index],
-                                         pen=audio_pens[channel_index]))
+                                         pen=audio_pens[channel_index],
+                                         skipFiniteCheck=True,
+                                         autoDownsample=True,
+                                         pxMode=True,
+                                         ))
   h_lines.append(audio_plotWidget.plot([0, 0], [-500, 500], pen=pyqtgraph.mkPen([0, 150, 150], width=7)))
 if use_spectrogram:
   pass
 
 graphics_layout.setWindowTitle('Happy Birthday!')
+print(composite_layout_column_width*layout_specs[3])
+graphics_layout.setGeometry(10, 10, composite_layout_column_width * layout_specs[3], composite_layout_row_height * layout_specs[2])
+audio_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
 # graphics_layout.show()
 
 
@@ -224,7 +235,7 @@ data_index = int(160*audio_resample_rate_hz) #int(audio_data.shape[0]*0.1)
 data_index_increment = audio_resample_rate_hz/10
 data = audio_data
 
-N = 20
+N = 100
 t0 = time.time()
 for n in range(N):
   data_index = int(data_index + data_index_increment)
@@ -250,7 +261,7 @@ for n in range(N):
   # Update the subplot with the waveform segment.
   update_layout_widget(h_lines, layout_specs, data_toPlot)
 
-  QtCore.QCoreApplication.processEvents()
+  # QtCore.QCoreApplication.processEvents()
 
   img = graphics_layout.grab().toImage()
   img = qimage_to_numpy(img)
@@ -265,4 +276,4 @@ print('duration per loop: %0.3f s' % (duration_s/N))
 print('loop rate: %0.3f Hz' % (N/duration_s))
 print()
 
-# app.exec()
+app.exec()

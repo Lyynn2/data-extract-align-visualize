@@ -91,14 +91,15 @@ device_friendlyNames = {
 #   11:45:48 see blood in water
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
-output_video_start_time_str = '2023-07-08 11:48:45 -0400'
-# output_video_start_time_str = '2023-07-08 11:53:45 -0400'
-# output_video_start_time_str = '2023-07-08 11:35:00 -0400'
-output_video_duration_s = 750
+# output_video_start_time_str = '2023-07-08 11:48:45 -0400'
+# output_video_start_time_str = '2023-07-08 11:53:53 -0400'
+output_video_start_time_str = '2023-07-08 11:35:00 -0400'
+output_video_duration_s = 50*60
 output_video_fps = 10
 
 # Define the output video size/resolution and compression.
-composite_layout_column_width = 300 # also defines the scaling/resolution of photos/videos
+composite_layout_column_width = 400 # also defines the scaling/resolution of photos/videos
+subplot_border_size = 5 # ignored if the pyqtgraph subplot method is used
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
 output_video_compressed_rate_MB_s = 0.5 # None to not compress the video
 
@@ -108,7 +109,7 @@ output_audio_track_volume_gain_factor = 50 # 1 to not change volume
 save_audio_track_as_separate_file = True
 
 # Specify annotations on the output video.
-output_video_banner_height_fraction = 0.03 # fraction of the final composite frame
+output_video_banner_height_fraction = 0.04 # fraction of the final composite frame
 output_video_banner_bg_color   = [100, 100, 100] # BGR
 output_video_banner_text_color = [255, 255,   0] # BGR
 
@@ -127,6 +128,10 @@ timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_cu
   'image': (1, 1/output_video_fps), # first entry controls how long an image will be shown
 }
 
+# Method of creating the composite visualization frame.
+use_pyqtgraph_subplots = False
+use_opencv_subplots = True
+
 # Visualization debugging options.
 show_visualization_window = False
 debug_composite_layout = False # Will show the layout with dummy data and then exit
@@ -140,6 +145,15 @@ audio_timestamps_toPlot_s = np.arange(start=0, stop=audio_plot_length)/audio_res
 output_video_banner_fontScale = None # will be determined later based on the size of the banner
 output_video_banner_textSize  = None # will be determined later once the font scale is computed
 
+output_video_num_rows = max([layout_specs[0] + layout_specs[2] for layout_specs in composite_layout.values()])
+output_video_num_cols = max([layout_specs[1] + layout_specs[3] for layout_specs in composite_layout.values()])
+if use_opencv_subplots:
+  output_video_width = composite_layout_column_width*output_video_num_cols + subplot_border_size*(output_video_num_cols+1)
+  output_video_height = composite_layout_row_height*output_video_num_rows + subplot_border_size*(output_video_num_rows+1)
+if use_pyqtgraph_subplots:
+  output_video_width = composite_layout_column_width*output_video_num_cols
+  output_video_height = composite_layout_row_height*output_video_num_rows
+  
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
 output_video_filepath = os.path.join(data_dir_root,
@@ -204,7 +218,7 @@ def add_timestamp_banner(img, timestamp_s):
   
   # Compute the size of the text that will be drawn on the image.
   fontFace = cv2.FONT_HERSHEY_DUPLEX # cv2.FONT_HERSHEY_SIMPLEX
-  fontThickness = 2 if output_video_banner_height > 25 else 1
+  fontThickness = 1 #2 if output_video_banner_height > 25 else 1
   if output_video_banner_fontScale is None:
     # If this is the first time, compute a font size to use.
     target_height = 0.5*output_video_banner_height
@@ -264,7 +278,7 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
     data_dir = os.path.join(data_dir_root, device_id)
     filepaths = glob.glob(os.path.join(data_dir, '*'))
   filepaths = [filepath for filepath in filepaths if not os.path.isdir(filepath)]
-  print('  See %4d files for device [%s]' % (len(filepaths), device_friendlyName))
+  print('  Found %4d files for device [%s]' % (len(filepaths), device_friendlyName))
   
   # Loop through each file to extract its timestamps and data pointers.
   for (file_index, filepath) in enumerate(filepaths):
@@ -287,6 +301,9 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
     elif is_audio(filepath):
       if file_index > 0:
         print('\r', end='')
+      # if 'CETI23-280.1688831582000.WAV' not in filepath:
+      #   print()
+      #   continue
       print('    Loading and resampling file %2d/%2d     ' % (file_index+1, len(filepaths)), end='')
       (audio_rate, audio_data) = wavfile.read(filepath)
       # Resample the data.
@@ -318,118 +335,276 @@ output_video_timestamps_s = output_video_start_time_s \
                             + np.arange(start=0,
                                         stop=output_video_num_frames)*output_video_frame_duration_s
 
-# # The below will make the background white if desired (the default is black).
-# pyqtgraph.setConfigOption('background', 'w')
-# pyqtgraph.setConfigOption('foreground', 'k')
+if use_pyqtgraph_subplots:
+  # # The below will make the background white if desired (the default is black).
+  # pyqtgraph.setConfigOption('background', 'w')
+  # pyqtgraph.setConfigOption('foreground', 'k')
 
-# Define a helper to update a subplot with new device data.
-# layout_widget is the item to update, such as an image view or an audio plot.
-# layout_specs is (row, col, rowspan, colspan) of the subplot location.
-# data is an image or audio data.
-# label is text to write on an image if desired.
-def update_layout_widget(layout_widget, layout_specs, data, label=None):
-  if is_image(data):
-    # Scale the image to the size specified by the subplots it occupies.
-    # (row, col, rowspan, colspan) = layout_specs
-    # data = scale_image(data, target_width=composite_layout_column_width*colspan,
-    #                          target_height=composite_layout_row_height*rowspan)
-    # Draw text on the image if desired.
-    # Note that this is done after scaling, since scaling the text could make it unreadable.
-    if label is not None:
-      draw_text_on_image(data, label, pos=(0,-1),
-                         font_scale=0.5, font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX)
-    # Update the subplot with the image.
-    pixmap = cv2_to_pixmap(data)
-    layout_widget.setPixmap(pixmap)
+  # Define a helper to update a subplot with new device data.
+  # layout_widget is the item to update, such as an image view or an audio plot.
+  # layout_specs is (row, col, rowspan, colspan) of the subplot location.
+  # data is an image or audio data.
+  # label is text to write on an image if desired.
+  def update_subplot(layout_widget, layout_specs, data, label=None):
+    if is_image(data):
+      # Draw text on the image if desired.
+      # Note that this is done after scaling, since scaling the text could make it unreadable.
+      if label is not None:
+        draw_text_on_image(data, label, pos=(0,-1),
+                           font_scale=0.5, font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX)
+      # Update the subplot with the image.
+      pixmap = cv2_to_pixmap(data)
+      layout_widget.setPixmap(pixmap)
+
+    elif is_audio(data):
+      # Update the line items with the new data.
+      for channel_index in range(num_audio_channels_toPlot):
+        layout_widget[channel_index].setData(audio_timestamps_toPlot_s, data[:,channel_index])
+      # Plot a vertical current time marker, and update the y range.
+      if np.amax(data) < 50:
+        layout_widget[-1].setData([0, 0], np.amax(data)*np.array([-50, 50]))
+        audio_plotWidget.setYRange(-50, 50) # avoid zooming into an empty plot
+      else:
+        layout_widget[-1].setData([0, 0], np.amax(data)*np.array([-1, 1]))
+        audio_plotWidget.enableAutoRange(enable=0.9) # allow automatic scaling that shows 90% of the data
+
+  # Create the plotting layout.
+
+  # Store the widgets/plots, and dummy data for each one so it can be cleared when no device data is available.
+  # Will use layout_specs as the key, in case multiple devices are in the same subplot.
+  layout_widgets = {}
+  dummy_datas = {}
+  # Initialize the layout.
+  # The top level will be a GraphicsLayout, since that seems easier to export to an image.
+  # Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
+  app = QtWidgets.QApplication([])
+  graphics_layout = pyqtgraph.GraphicsLayoutWidget()
+  grid_layout = QtWidgets.QGridLayout()
+  graphics_layout.setLayout(grid_layout)
+  # Initialize the visualizations for each stream.
+  for (device_friendlyName, layout_specs) in composite_layout.items():
+    device_id = device_friendlyName_to_id(device_friendlyName)
+    (row, col, rowspan, colspan) = layout_specs
+    # If a widget has already been created for this subplot location, just use that one for this device too.
+    if str(layout_specs) in layout_widgets:
+      continue
+    # Load information about the stream.
+    media_file_infos = media_infos[device_id]
+    example_filepath = list(media_file_infos.keys())[0]
+    (example_timestamps_s, example_data) = media_file_infos[example_filepath]
+    # Create a layout based on the data type.
+    if is_video(example_filepath) or is_image(example_filepath):
+      if is_video(example_filepath):
+        success, example_image = load_frame(example_data, 0,
+                                            target_width=composite_layout_column_width*colspan,
+                                            target_height=composite_layout_row_height*rowspan)
+      elif is_image(example_filepath):
+        example_image = load_image(example_filepath,
+                                   target_width=composite_layout_column_width*colspan,
+                                   target_height=composite_layout_row_height*rowspan)
+      else:
+        raise AssertionError('Thought it was a video or image, but apparently not')
+      # Create a gray image the size of the real image that can be used to see the composite layout.
+      blank_image = 100*np.ones_like(example_image)
+      # Create a widget to show the image, that is set to the target height.
+      image_labelWidget = QtWidgets.QLabel()
+      grid_layout.addWidget(image_labelWidget, *layout_specs,
+                            alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
+      grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
+      update_subplot(image_labelWidget, layout_specs, blank_image)
+      # Store the widget and a black image as dummy data.
+      layout_widgets[str(layout_specs)] = image_labelWidget
+      dummy_datas[str(layout_specs)] = 0*blank_image
+    elif is_audio(example_filepath):
+      # Create a plot for the audio data, that is set to the target height.
+      audio_plotWidget = pyqtgraph.PlotWidget()
+      grid_layout.addWidget(audio_plotWidget, *layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
+      grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
+      # Generate random noise that can be used to preview the visualization layout.
+      random_audio = 500*np.random.normal(size=(audio_plot_length, num_audio_channels_toPlot))
+      # Ensure the widget fills the width of the entire allocated region of subplots.
+      audio_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
+      # Plot the dummy data, and store handles to the lines so their lines can be updated later.
+      # Currently assumes 2 channels of audio data.
+      h_lines = []
+      for channel_index in range(num_audio_channels_toPlot):
+        h_lines.append(audio_plotWidget.plot(audio_timestamps_toPlot_s, random_audio[:,channel_index],
+                                             pen=audio_plot_pens[channel_index]))
+      h_lines.append(audio_plotWidget.plot([0, 0], [-500, 500], pen=pyqtgraph.mkPen([0, 150, 150], width=7)))
+      # Store the line handles and dummy data.
+      layout_widgets[str(layout_specs)] = h_lines
+      dummy_datas[str(layout_specs)] = 0*random_audio
+
+  # Draw the visualization with dummy data.
+  QtCore.QCoreApplication.processEvents()
+  graphics_layout.setWindowTitle('Happy Birthday!')
+  if show_visualization_window or debug_composite_layout:
+    graphics_layout.show()
+    if debug_composite_layout:
+      app.exec()
+      import sys
+      sys.exit()
+
+######################################################
+# Alternative option using OpenCV instead of PyQtGraph for the subplotting/layout
+
+if use_opencv_subplots:
+  def get_slice_indexes_for_subplot_update(layout_specs, subplot_img):
+    (row, col, rowspan, colspan) = layout_specs
+    # Get the indexes of the total space allocated to this subplot.
+    start_col_index = subplot_border_size*(col+1) + composite_layout_column_width*(col)
+    end_col_index = start_col_index + composite_layout_column_width*(colspan) + subplot_border_size*(colspan-1) - 1
+    start_row_index = subplot_border_size*(row+1) + composite_layout_row_height*(row)
+    end_row_index = start_row_index + composite_layout_row_height*(rowspan) + subplot_border_size*(rowspan-1) - 1
+    # Center the desired image in the subplot.
+    subplot_width = end_col_index - start_col_index + 1
+    pad_left = (subplot_width - subplot_img.shape[1])//2
+    pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+    start_col_index += pad_left
+    end_col_index -= pad_right
+    subplot_height = end_row_index - start_row_index + 1
+    pad_top = (subplot_height - subplot_img.shape[0])//2
+    pad_bottom = (subplot_height - subplot_img.shape[0]) - pad_top
+    start_row_index += pad_top
+    end_row_index -= pad_bottom
+    # Return the slice indexes.
+    # Increment end indexes since the end indexes computed above were considered inclusive,
+    #  but slicing will be exclusive of the end indexes.
+    return (start_row_index, end_row_index+1, start_col_index, end_col_index+1)
     
-  elif is_audio(data):
-    # Update the line items with the new data.
-    for channel_index in range(num_audio_channels_toPlot):
-      layout_widget[channel_index].setData(audio_timestamps_toPlot_s, data[:,channel_index])
-    # Plot a vertical current time marker, and update the y range.
-    if np.amax(data) < 50:
-      layout_widget[-1].setData([0, 0], np.amax(data)*np.array([-50, 50]))
-      audio_plotWidget.setYRange(-50, 50) # avoid zooming into an empty plot
-    else:
-      layout_widget[-1].setData([0, 0], np.amax(data)*np.array([-1, 1]))
-      audio_plotWidget.enableAutoRange(enable=0.9) # allow automatic scaling that shows 90% of the data
+  # Define a helper to update a subplot with new device data.
+  # composite_img is the composite frame image to update.
+  # layout_specs is (row, col, rowspan, colspan) of the subplot location.
+  # data is an image or audio data.
+  # image_label is text to write on an image if desired.
+  # audio_graphics_layout and audio_plot_handles are the audio plot items if updating audio.
+  def update_subplot(composite_img, layout_specs, data,
+                     image_label=None,
+                     audio_graphics_layout=None, audio_plot_handles=None):
+    if is_image(data):
+      # Draw text on the image if desired.
+      # Note that this is done after scaling, since scaling the text could make it unreadable.
+      if image_label is not None:
+        draw_text_on_image(data, image_label, pos=(0,-1),
+                           font_scale=0.7, font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX)
+      # Update the subplot within the image.
+      subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data)
+      composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
+    
+    elif is_audio(data):
+      # Update the line items with the new data.
+      for channel_index in range(num_audio_channels_toPlot):
+        audio_plot_handles[channel_index].setData(audio_timestamps_toPlot_s, data[:,channel_index])
+      # Plot a vertical current time marker, and update the y range.
+      if np.amax(data) < 50:
+        audio_plot_handles[-1].setData([0, 0], np.amax(data)*np.array([-50, 50]))
+        audio_plotWidget.setYRange(-50, 50) # avoid zooming into an empty plot
+      else:
+        audio_plot_handles[-1].setData([0, 0], np.amax(data)*np.array([-1, 1]))
+        audio_plotWidget.enableAutoRange(enable=0.9) # allow automatic scaling that shows 90% of the data
+      # Grab the plot as an image.
+      img = audio_graphics_layout.grab().toImage()
+      img = qimage_to_numpy(img)
+      img = np.array(img[:,:,0:3])
+      (_, _, rowspan, colspan) = layout_specs
+      img = scale_image(img, target_width=composite_layout_column_width*colspan,
+                             target_height=composite_layout_row_height*rowspan)
+      # Update the subplot with the image.
+      composite_img = update_subplot(composite_img, layout_specs, img, image_label=image_label)
+    
+    return composite_img
+  
+  # Create the blank image to use as the background.
+  composite_img_blank = np.zeros(shape=(output_video_height, output_video_width, 3), dtype=np.uint8)
+  composite_img_dummy = composite_img_blank.copy()
 
-# Create the plotting layout.
+  # Store dummy data for each subplot so it can be cleared when no device data is available.
+  # Also store the widgets/plots for each audio visualization so they can be updated later.
+  # Will use layout_specs as the key, in case multiple devices are in the same subplot.
+  audio_graphics_layouts = {}
+  audio_grid_layouts = {}
+  audio_plot_handles = {}
+  dummy_datas = {}
+  # Initialize pyqtgraph.
+  app = QtWidgets.QApplication([])
+  # Initialize the visualizations for each stream.
+  for (device_friendlyName, layout_specs) in composite_layout.items():
+    device_id = device_friendlyName_to_id(device_friendlyName)
+    (row, col, rowspan, colspan) = layout_specs
+    # If a widget has already been created for this subplot location, just use that one for this device too.
+    if str(layout_specs) in dummy_datas:
+      continue
+    # Load information about the stream.
+    media_file_infos = media_infos[device_id]
+    example_filepath = list(media_file_infos.keys())[0]
+    (example_timestamps_s, example_data) = media_file_infos[example_filepath]
+    # Create a layout and dummy data based on the stream type.
+    if is_video(example_filepath) or is_image(example_filepath):
+      if is_video(example_filepath):
+        success, example_image = load_frame(example_data, 0,
+                                            target_width=composite_layout_column_width*colspan,
+                                            target_height=composite_layout_row_height*rowspan)
+      elif is_image(example_filepath):
+        example_image = load_image(example_filepath,
+                                   target_width=composite_layout_column_width*colspan,
+                                   target_height=composite_layout_row_height*rowspan)
+      else:
+        raise AssertionError('Thought it was a video or image, but apparently not')
+      # Create a gray image the size of the real image that can be used to see the composite layout.
+      blank_image = 100*np.ones_like(example_image)
+      # Update the dummy composite image with the dummy image.
+      update_subplot(composite_img_dummy, layout_specs, example_image,
+                     image_label=device_friendlyName)
+      # Store a black image as dummy data.
+      dummy_datas[str(layout_specs)] = 0*blank_image
+    elif is_audio(example_filepath):
+      # Initialize the layout.
+      # The top level will be a GraphicsLayout, since that seems easier to export to an image.
+      # Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
+      graphics_layout = pyqtgraph.GraphicsLayoutWidget()
+      grid_layout = QtWidgets.QGridLayout()
+      graphics_layout.setLayout(grid_layout)
+      # Create a plot for the audio data, that is set to the target size.
+      audio_plotWidget = pyqtgraph.PlotWidget()
+      grid_layout.addWidget(audio_plotWidget, *layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
+      graphics_layout.setGeometry(10, 10, composite_layout_column_width*layout_specs[3],
+                                          composite_layout_row_height*layout_specs[2])
+      # Ensure the widget fills the width of the entire allocated region of subplots.
+      grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
+      audio_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
+      # Generate random noise that can be used to preview the visualization layout.
+      random_audio = 500*np.random.normal(size=(audio_plot_length, num_audio_channels_toPlot))
+      # Plot the dummy data, and store handles to the lines so their lines can be updated later.
+      # Currently assumes 2 channels of audio data.
+      h_lines = []
+      for channel_index in range(num_audio_channels_toPlot):
+        h_lines.append(audio_plotWidget.plot(audio_timestamps_toPlot_s, random_audio[:,channel_index],
+                                             pen=audio_plot_pens[channel_index]))
+      h_lines.append(audio_plotWidget.plot([0, 0], [-500, 500], pen=pyqtgraph.mkPen([0, 150, 150], width=7)))
+      # Update the example composite image.
+      update_subplot(composite_img_dummy, layout_specs, random_audio,
+                     image_label=None,
+                     audio_graphics_layout=graphics_layout, audio_plot_handles=h_lines)
+      # Store the line handles and dummy data.
+      audio_graphics_layouts[str(layout_specs)] = graphics_layout
+      audio_grid_layouts[str(layout_specs)] = grid_layout
+      audio_plot_handles[str(layout_specs)] = h_lines
+      dummy_datas[str(layout_specs)] = 0*random_audio
+  
+      # Show the window if desired.
+      QtCore.QCoreApplication.processEvents()
+      if show_visualization_window:
+        graphics_layout.show()
 
-# Store the widgets/plots, and dummy data for each one so it can be cleared when no device data is available.
-# Will use layout_specs as the key, in case multiple devices are in the same subplot.
-layout_widgets = {}
-dummy_datas = {}
-# Initialize the layout.
-# The top level will be a GraphicsLayout, since that seems easier to export to an image.
-# Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
-app = QtWidgets.QApplication([])
-graphics_layout = pyqtgraph.GraphicsLayoutWidget()
-grid_layout = QtWidgets.QGridLayout()
-graphics_layout.setLayout(grid_layout)
-# Initialize the visualizations for each stream.
-for (device_friendlyName, layout_specs) in composite_layout.items():
-  device_id = device_friendlyName_to_id(device_friendlyName)
-  (row, col, rowspan, colspan) = layout_specs
-  # If a widget has already been created for this subplot location, just use that one for this device too.
-  if str(layout_specs) in layout_widgets:
-    continue
-  # Load information about the stream.
-  media_file_infos = media_infos[device_id]
-  example_filepath = list(media_file_infos.keys())[0]
-  (example_timestamps_s, example_data) = media_file_infos[example_filepath]
-  # Create a layout based on the data type.
-  if is_video(example_filepath) or is_image(example_filepath):
-    if is_video(example_filepath):
-      success, example_image = load_frame(video_reader, 0,
-                                          target_width=composite_layout_column_width*colspan,
-                                          target_height=composite_layout_row_height*rowspan)
-    elif is_image(example_filepath):
-      example_image = load_image(example_filepath,
-                                 target_width=composite_layout_column_width*colspan,
-                                 target_height=composite_layout_row_height*rowspan)
-    else:
-      raise AssertionError('Thought it was a video or image, but apparently not')
-    # Create a gray image the size of the real image that can be used to see the composite layout.
-    blank_image = 100*np.ones_like(example_image)
-    # Create a widget to show the image, that is set to the target height.
-    image_labelWidget = QtWidgets.QLabel()
-    grid_layout.addWidget(image_labelWidget, *layout_specs,
-                          alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
-    grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
-    update_layout_widget(image_labelWidget, layout_specs, blank_image)
-    # Store the widget and a black image as dummy data.
-    layout_widgets[str(layout_specs)] = image_labelWidget
-    dummy_datas[str(layout_specs)] = 0*blank_image
-  elif is_audio(example_filepath):
-    # Create a plot for the audio data, that is set to the target height.
-    audio_plotWidget = pyqtgraph.PlotWidget()
-    grid_layout.addWidget(audio_plotWidget, *layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
-    grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
-    # Generate random noise that can be used to preview the visualization layout.
-    random_audio = np.random.rand(audio_plot_length, 2)
-    # Ensure the widget fills the width of the entire allocated region of subplots.
-    audio_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
-    # Plot the dummy data, and store handles to the lines so their lines can be updated later.
-    # Currently assumes 2 channels of audio data.
-    h_lines = []
-    for channel_index in range(num_audio_channels_toPlot):
-      h_lines.append(audio_plotWidget.plot(audio_timestamps_toPlot_s, random_audio[:,channel_index],
-                                           pen=audio_plot_pens[channel_index]))
-    h_lines.append(audio_plotWidget.plot([0, 0], [-500, 500], pen=pyqtgraph.mkPen([0, 150, 150], width=7)))
-    # Store the line handles and dummy data.
-    layout_widgets[str(layout_specs)] = h_lines
-    dummy_datas[str(layout_specs)] = random_audio
-
-# Draw the visualization with dummy data.
-QtCore.QCoreApplication.processEvents()
-graphics_layout.setWindowTitle('Happy Birthday!')
-if show_visualization_window or debug_composite_layout:
-  graphics_layout.show()
-  if debug_composite_layout:
-    app.exec()
-    import sys
-    sys.exit()
+  # Show the window if desired.
+  if show_visualization_window or debug_composite_layout:
+    cv2.imshow('Happy Birthday!', composite_img_dummy)
+    cv2.waitKey(1)
+    if debug_composite_layout:
+      cv2.waitKey(0)
+      import sys
+      sys.exit()
+    
 
 ######################################################
 # CREATE A VIDEO
@@ -439,8 +614,8 @@ print()
 print('Generating an output video with %d frames' % output_video_timestamps_s.shape[0])
 
 # Will store some timing information for finding processing bottlenecks.
-duration_s_pyqt = 0
-duration_s_pyqt_audio = 0
+duration_s_updatePlots_total = 0
+duration_s_updatePlots_audio = 0
 duration_s_getIndex = 0
 duration_s_readImages = 0
 readImages_count = 0
@@ -452,6 +627,8 @@ duration_s_writeFrame = 0
 
 # Generate a frame for every desired timestamp.
 composite_video_writer = None
+if use_opencv_subplots:
+  composite_img_current = composite_img_blank.copy()
 last_status_time_s = 0
 layouts_updated = {}
 layouts_showing_dummyData = dict([(str(layout_specs), False) for layout_specs in composite_layout.values()])
@@ -464,7 +641,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           (frame_index+1, output_video_num_frames, 100*(frame_index+1)/output_video_num_frames,
            current_time_s, time_s_to_str(current_time_s, localtime_offset_s, localtime_offset_str)))
     last_status_time_s = time.time()
-
+  
   # Mark that no subplot layouts have been updated.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     layouts_updated[str(layout_specs)] = False
@@ -502,11 +679,15 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
             readVideos_count += 1
             # Update the subplot with the video frame.
             t0 = time.time()
-            update_layout_widget(layout_widgets[str(layout_specs)], layout_specs, img, label=device_friendlyName)
+            if use_pyqtgraph_subplots:
+              update_subplot(layout_widgets[str(layout_specs)], layout_specs, img, label=device_friendlyName)
+            elif use_opencv_subplots:
+              img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+              update_subplot(composite_img_current, layout_specs, img, image_label=device_friendlyName)
             layouts_updated[str(layout_specs)] = True
             layouts_showing_dummyData[str(layout_specs)] = False
             layouts_prevState[str(layout_specs)] = (filepath, data_index)
-            duration_s_pyqt += time.time() - t0
+            duration_s_updatePlots_total += time.time() - t0
             break # don't check any more media for this device
       # Handle photos.
       elif is_image(filepath):
@@ -529,11 +710,15 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           readImages_count += 1
           # Update the subplot with the photo.
           t0 = time.time()
-          update_layout_widget(layout_widgets[str(layout_specs)], layout_specs, img, label=device_friendlyName)
+          if use_pyqtgraph_subplots:
+            update_subplot(layout_widgets[str(layout_specs)], layout_specs, img, label=device_friendlyName)
+          elif use_opencv_subplots:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            update_subplot(composite_img_current, layout_specs, img, image_label=device_friendlyName)
           layouts_updated[str(layout_specs)] = True
           layouts_showing_dummyData[str(layout_specs)] = False
           layouts_prevState[str(layout_specs)] = (filepath, data_index)
-          duration_s_pyqt += time.time() - t0
+          duration_s_updatePlots_total += time.time() - t0
           break # don't check any more media for this device
       # Handle audio.
       elif is_audio(filepath):
@@ -569,36 +754,58 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           duration_s_audioParsing += time.time() - t0
           # Update the subplot with the waveform segment.
           t0 = time.time()
-          update_layout_widget(layout_widgets[str(layout_specs)], layout_specs, data_toPlot)
+          if use_pyqtgraph_subplots:
+            update_subplot(layout_widgets[str(layout_specs)], layout_specs, data_toPlot)
+          elif use_opencv_subplots:
+            update_subplot(composite_img_current, layout_specs, data_toPlot,
+                           image_label=None,
+                           audio_graphics_layout=audio_graphics_layouts[str(layout_specs)],
+                           audio_plot_handles=audio_plot_handles[str(layout_specs)])
           layouts_updated[str(layout_specs)] = True
           layouts_showing_dummyData[str(layout_specs)] = False
           layouts_prevState[str(layout_specs)] = (filepath, data_index)
-          duration_s_pyqt += time.time() - t0
-          duration_s_pyqt_audio += time.time() - t0
+          duration_s_updatePlots_total += time.time() - t0
+          duration_s_updatePlots_audio += time.time() - t0
           break # don't check any more media for this device
 
   # If a layout was not updated, show its dummy data.
   # But only spend time updating it if it isn't already showing dummy data.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     if not layouts_updated[str(layout_specs)] and not layouts_showing_dummyData[str(layout_specs)]:
-      t0 = time.time()
       device_id = device_friendlyName_to_id(device_friendlyName)
-      update_layout_widget(layout_widgets[str(layout_specs)], layout_specs, dummy_datas[str(layout_specs)])
+      t0 = time.time()
+      if use_pyqtgraph_subplots:
+        update_subplot(layout_widgets[str(layout_specs)], layout_specs, dummy_datas[str(layout_specs)])
+      elif use_opencv_subplots:
+        if str(layout_specs) in audio_graphics_layouts:
+          update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
+                         image_label=None,
+                         audio_graphics_layout=audio_graphics_layouts[str(layout_specs)],
+                         audio_plot_handles=audio_plot_handles[str(layout_specs)])
+          duration_s_updatePlots_audio += time.time() - t0
+        else:
+          update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
+                         image_label=None)
       layouts_showing_dummyData[str(layout_specs)] = True
-      duration_s_pyqt += time.time() - t0
+      duration_s_updatePlots_total += time.time() - t0
       layouts_prevState[str(layout_specs)] = None
 
   # Refresh the figure with the updated subplots.
-  t0 = time.time()
-  QtCore.QCoreApplication.processEvents()
-  duration_s_pyqt += time.time() - t0
+  if use_pyqtgraph_subplots:
+    t0 = time.time()
+    QtCore.QCoreApplication.processEvents()
+    duration_s_updatePlots_total += time.time() - t0
 
   # Render the figure into a composite frame image.
-  t0 = time.time()
-  exported_img = graphics_layout.grab().toImage()
-  exported_img = qimage_to_numpy(exported_img)
-  exported_img = np.array(exported_img[:,:,0:3])
-  duration_s_exportFrame += time.time() - t0
+  if use_pyqtgraph_subplots:
+    t0 = time.time()
+    exported_img = graphics_layout.grab().toImage()
+    exported_img = qimage_to_numpy(exported_img)
+    exported_img = np.array(exported_img[:,:,0:3])
+    exported_img = scale_image(exported_img, target_width=output_video_width, target_height=output_video_height)
+    duration_s_exportFrame += time.time() - t0
+  elif use_opencv_subplots:
+    exported_img = composite_img_current
   # Add a banner with the current timestamp.
   exported_img = add_timestamp_banner(exported_img, current_time_s)
   # Write the frame to the output video.
@@ -643,14 +850,14 @@ print('  Frame count   : %d' % output_video_timestamps_s.shape[0])
 print('  Frame rate    : %0.1f frames per second' % (output_video_timestamps_s.shape[0]/total_duration_s))
 print('  Speed factor  : %0.2f x real time' % (output_video_duration_s/total_duration_s))
 print('Processing breakdown: ')
-print('  PyQt        : %6.2f%% (%0.3f seconds)' % (100*duration_s_pyqt/total_duration_s, duration_s_pyqt))
-print('  PyQt (audio): %6.2f%% (%0.3f seconds)' % (100*duration_s_pyqt_audio/total_duration_s, duration_s_pyqt_audio))
-print('  GetIndex    : %6.2f%% (%0.3f seconds)' % (100*duration_s_getIndex/total_duration_s, duration_s_getIndex))
-print('  ReadImages  : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readImages/total_duration_s, duration_s_readImages, readImages_count))
-print('  ReadVideos  : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readVideos/total_duration_s, duration_s_readVideos, readVideos_count))
-print('  ParseAudio  : %6.2f%% (%0.3f seconds)' % (100*duration_s_audioParsing/total_duration_s, duration_s_audioParsing))
-print('  ExportFrame : %6.2f%% (%0.3f seconds)' % (100*duration_s_exportFrame/total_duration_s, duration_s_exportFrame))
-print('  WriteFrame  : %6.2f%% (%0.3f seconds)' % (100*duration_s_writeFrame/total_duration_s, duration_s_writeFrame))
+print('  UpdatePlots (total) : %6.2f%% (%0.3f seconds)' % (100 * duration_s_updatePlots_total / total_duration_s, duration_s_updatePlots_total))
+print('  UpdatePlots (audio) : %6.2f%% (%0.3f seconds)' % (100 * duration_s_updatePlots_audio / total_duration_s, duration_s_updatePlots_audio))
+print('  GetIndex            : %6.2f%% (%0.3f seconds)' % (100*duration_s_getIndex/total_duration_s, duration_s_getIndex))
+print('  ReadImages          : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readImages/total_duration_s, duration_s_readImages, readImages_count))
+print('  ReadVideos          : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readVideos/total_duration_s, duration_s_readVideos, readVideos_count))
+print('  ParseAudio          : %6.2f%% (%0.3f seconds)' % (100*duration_s_audioParsing/total_duration_s, duration_s_audioParsing))
+print('  ExportFrame         : %6.2f%% (%0.3f seconds)' % (100*duration_s_exportFrame/total_duration_s, duration_s_exportFrame))
+print('  WriteFrame          : %6.2f%% (%0.3f seconds)' % (100*duration_s_writeFrame/total_duration_s, duration_s_writeFrame))
 print()
 
 ######################################################
@@ -721,22 +928,25 @@ if add_audio_track_to_output_video:
         audio_clips.append(audio_clip)
   
   # Create the composite audio.
-  print('  Adding %d audio clips to the video' % (len(audio_clips)))
-  t0 = time.time()
-  composite_audio_clip = CompositeAudioClip(audio_clips)
-  composite_audio_clip = composite_audio_clip.volumex(output_audio_track_volume_gain_factor)
-  output_video_clip = output_video_clip.set_audio(composite_audio_clip)
-  output_video_withAudio_filepath = '%s_withAudio%s' % os.path.splitext(output_video_filepath)
-  output_video_clip.write_videofile(output_video_withAudio_filepath,
-                                    verbose=False,
-                                    logger=proglog.TqdmProgressBarLogger(print_messages=False),
-                                    # codec='libx264',
-                                    audio_codec='aac',
-                                    temp_audiofile='%s.m4a' % os.path.splitext(output_video_filepath)[0],
-                                    remove_temp=(not save_audio_track_as_separate_file),
-                                    )
-  print('Audio track added in %0.3f seconds' % (time.time() - t0))
-  print()
+  if len(audio_clips) == 0:
+    print('  No audio clips were found that overlap with the generated video')
+  else:
+    print('  Adding %d audio clips to the video' % (len(audio_clips)))
+    t0 = time.time()
+    composite_audio_clip = CompositeAudioClip(audio_clips)
+    composite_audio_clip = composite_audio_clip.volumex(output_audio_track_volume_gain_factor)
+    output_video_clip = output_video_clip.set_audio(composite_audio_clip)
+    output_video_withAudio_filepath = '%s_withAudio%s' % os.path.splitext(output_video_filepath)
+    output_video_clip.write_videofile(output_video_withAudio_filepath,
+                                      verbose=False,
+                                      logger=proglog.TqdmProgressBarLogger(print_messages=False),
+                                      # codec='libx264',
+                                      audio_codec='aac',
+                                      temp_audiofile='%s.m4a' % os.path.splitext(output_video_filepath)[0],
+                                      remove_temp=(not save_audio_track_as_separate_file),
+                                      )
+    print('Audio track added in %0.3f seconds' % (time.time() - t0))
+    print()
 
 ######################################################
 # EXIT
