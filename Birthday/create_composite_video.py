@@ -52,7 +52,7 @@ localtime_offset_str = '-0400'
 
 # Specify offsets to add to timestamps extracted from filenames.
 epoch_offsets_toAdd_s = {
-  'CETI-DJI_MAVIC3-1'          : 0.67,
+  'CETI-DJI_MAVIC3-1'          : 0.47,
   'DSWP-DJI_MAVIC3-2'          : 2.17,
   'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 204,
   'JD-CANON_REBEL_T5I'         : 14.28,
@@ -93,8 +93,9 @@ device_friendlyNames = {
 #   11:54:55 whales on other side of the boat
 # output_video_start_time_str = '2023-07-08 11:48:45 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
-output_video_start_time_str = '2023-07-08 11:35:00 -0400'
-output_video_duration_s = 50*60
+# output_video_start_time_str = '2023-07-08 11:35:00 -0400'
+output_video_start_time_str = '2023-07-08 11:52:00 -0400'
+output_video_duration_s = 4*60
 output_video_fps = 10
 
 # Define the output video size/resolution and compression.
@@ -114,7 +115,7 @@ output_video_banner_bg_color   = [100, 100, 100] # BGR
 output_video_banner_text_color = [255, 255,   0] # BGR
 
 # Configure audio plotting
-audio_resample_rate_hz = 9600 # original rate is 96000
+audio_resample_rate_hz = 48000 # original rate is 96000
 audio_plot_duration_beforeCurrentTime_s = 5
 audio_plot_duration_afterCurrentTime_s  = 10
 num_audio_channels_toPlot = 1
@@ -449,7 +450,7 @@ if use_pyqtgraph_subplots:
 # Alternative option using OpenCV instead of PyQtGraph for the subplotting/layout
 
 if use_opencv_subplots:
-  def get_slice_indexes_for_subplot_update(layout_specs, subplot_img):
+  def get_slice_indexes_for_subplot_update(layout_specs, subplot_img=None):
     (row, col, rowspan, colspan) = layout_specs
     # Get the indexes of the total space allocated to this subplot.
     start_col_index = subplot_border_size*(col+1) + composite_layout_column_width*(col)
@@ -457,16 +458,17 @@ if use_opencv_subplots:
     start_row_index = subplot_border_size*(row+1) + composite_layout_row_height*(row)
     end_row_index = start_row_index + composite_layout_row_height*(rowspan) + subplot_border_size*(rowspan-1) - 1
     # Center the desired image in the subplot.
-    subplot_width = end_col_index - start_col_index + 1
-    pad_left = (subplot_width - subplot_img.shape[1])//2
-    pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
-    start_col_index += pad_left
-    end_col_index -= pad_right
-    subplot_height = end_row_index - start_row_index + 1
-    pad_top = (subplot_height - subplot_img.shape[0])//2
-    pad_bottom = (subplot_height - subplot_img.shape[0]) - pad_top
-    start_row_index += pad_top
-    end_row_index -= pad_bottom
+    if subplot_img is not None:
+      subplot_width = end_col_index - start_col_index + 1
+      pad_left = (subplot_width - subplot_img.shape[1])//2
+      pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+      start_col_index += pad_left
+      end_col_index -= pad_right
+      subplot_height = end_row_index - start_row_index + 1
+      pad_top = (subplot_height - subplot_img.shape[0])//2
+      pad_bottom = (subplot_height - subplot_img.shape[0]) - pad_top
+      start_row_index += pad_top
+      end_row_index -= pad_bottom
     # Return the slice indexes.
     # Increment end indexes since the end indexes computed above were considered inclusive,
     #  but slicing will be exclusive of the end indexes.
@@ -556,7 +558,13 @@ if use_opencv_subplots:
       update_subplot(composite_img_dummy, layout_specs, example_image,
                      image_label=device_friendlyName)
       # Store a black image as dummy data.
-      dummy_datas[str(layout_specs)] = 0*blank_image
+      # Make it the full size of the subplot, rather than the size of the example image,
+      #  since other data for this subplot may be a different size than this first example
+      #  (for example, if a camera has both audio and video of different sizes/orientations).
+      (start_row_index, end_row_index, start_col_index, end_col_index) = get_slice_indexes_for_subplot_update(layout_specs)
+      subplot_width = end_col_index-start_col_index
+      subplot_height = end_row_index-start_row_index
+      dummy_datas[str(layout_specs)] = np.zeros((subplot_height, subplot_width, 3), dtype=np.uint8)
     elif is_audio(example_filepath):
       # Initialize the layout.
       # The top level will be a GraphicsLayout, since that seems easier to export to an image.
