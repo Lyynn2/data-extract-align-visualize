@@ -17,23 +17,25 @@ import pyqtgraph.exporters
 
 from helpers import *
 
-use_waveform = True
-use_spectrogram = False
+use_waveform = False
+use_spectrogram = True
 only_plot_one_test = True
 
 data_dir_root = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
 
 filepath = os.path.join(data_dir_root, 'DSWP-KASHMIR_MIXPRE6-1',
                               # 'CETI23-281.1688831930000.WAV')
-                              'CETI23-280.1688831582000.WAV')
+                              # 'CETI23-280.1688831582000.WAV') # 109.7
+                              'CETI23-279.1688830800000.WAV') # 547
+start_offset_s = 547 # 109.7
 
 num_audio_channels = 1
 audio_pens = [pyqtgraph.mkPen([255, 255, 255], width=1),
               pyqtgraph.mkPen([255, 0, 255], width=1)]
 
-audio_resample_rate_hz = 24000 # original rate is 96000
-audio_plot_duration_beforeCurrentTime_s = 2
-audio_plot_duration_afterCurrentTime_s  = 8
+audio_resample_rate_hz = 96000 # original rate is 96000
+audio_plot_duration_beforeCurrentTime_s = 5
+audio_plot_duration_afterCurrentTime_s  = 10
 
 audio_plot_length_beforeCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_beforeCurrentTime_s)
 audio_plot_length_afterCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_afterCurrentTime_s)
@@ -72,8 +74,8 @@ print('loaded')
 
 if only_plot_one_test and use_waveform:
   app = QtWidgets.QApplication([])
-  start_index = int(109.7*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
-  end_index = int(109.7*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
+  start_index = int(start_offset_s*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
+  end_index = int(start_offset_s*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
   # start_index = 0
   # end_index = audio_data.shape[0]-1
   graphics_layout = pyqtgraph.GraphicsLayoutWidget()
@@ -104,8 +106,8 @@ if only_plot_one_test and use_waveform:
 
 if only_plot_one_test and use_spectrogram:
   t0 = time.time()
-  start_index = int(109.7*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
-  end_index = int(109.7*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
+  start_index = int(start_offset_s*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
+  end_index = int(start_offset_s*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
   print(audio_data[start_index:end_index,0].shape)
   f, t, Sxx = signal.spectrogram(audio_data[start_index:end_index,0], audio_resample_rate_hz,
                                  window=signal.get_window('tukey', int(0.05*audio_resample_rate_hz)),
@@ -238,6 +240,8 @@ if only_plot_one_test and use_spectrogram:
   print('heatmap plot and export', (time.time()-t0)/100)
   cv2.imshow('test', img)
   cv2.waitKey(0)
+  graphics_layout.show()
+  app.exec()
   
   # import matplotlib.pyplot as plt
   # plt.pcolormesh(t, f, Sxx)

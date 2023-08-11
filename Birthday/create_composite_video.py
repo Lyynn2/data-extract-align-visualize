@@ -93,11 +93,13 @@ device_friendlyNames = {
 #   11:45:48 see blood in water
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
+output_video_start_time_str = '2023-07-08 11:44:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:48:45 -0400'
-output_video_start_time_str = '2023-07-08 11:53:53 -0400'
+# output_video_start_time_str = '2023-07-08 11:49:00 -0400'
+# output_video_start_time_str = '2023-07-08 11:53:53 -0400'
 # output_video_start_time_str = '2023-07-08 11:35:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:52:00 -0400'
-output_video_duration_s = 2
+output_video_duration_s = 16*60
 output_video_fps = 10
 
 # Define the output video size/resolution and compression.
@@ -125,8 +127,9 @@ audio_plot_waveform = False
 audio_plot_spectrogram = True # Will force audio_num_channels_toPlot = 1 for now
 audio_waveform_plot_pens = [pyqtgraph.mkPen([255, 255, 255], width=4),
                             pyqtgraph.mkPen([255, 0, 255], width=1)]
-audio_spectrogram_frequency_range = [1e3, 9e3]
-audio_spectrogram_window_s = 0.05
+audio_spectrogram_frequency_range = [0e3, min(40e3, audio_resample_rate_hz//2)]
+audio_spectrogram_window_s = 0.03
+audio_spectrogram_colormap = 'CET-L16' # 'inferno', 'CET-CBTL1', 'CET-L1', 'CET-L16', 'CET-L3', 'CET-R1'
 
 # Configure how device timestamps are matched with output video frame timestamps.
 timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
@@ -144,10 +147,16 @@ show_visualization_window = False
 debug_composite_layout = False # Will show the layout with dummy data and then exit
 
 # Derived configurations.
-audio_plot_length_beforeCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_beforeCurrentTime_s)
-audio_plot_length_afterCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_afterCurrentTime_s)
-audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
-audio_timestamps_toPlot_s = np.arange(start=0, stop=audio_plot_length)/audio_resample_rate_hz - audio_plot_duration_beforeCurrentTime_s
+if audio_plot_waveform:
+  audio_plot_length_beforeCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_beforeCurrentTime_s)
+  audio_plot_length_afterCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_afterCurrentTime_s)
+  audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
+  audio_timestamps_toPlot_s = np.arange(start=0, stop=audio_plot_length)/audio_resample_rate_hz - audio_plot_duration_beforeCurrentTime_s
+elif audio_plot_spectrogram:
+  audio_plot_length_beforeCurrentTime = int(audio_plot_duration_beforeCurrentTime_s/audio_spectrogram_window_s)
+  audio_plot_length_afterCurrentTime = int(audio_plot_duration_afterCurrentTime_s/audio_spectrogram_window_s)
+  audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
+audio_plot_duration_s = (audio_plot_duration_beforeCurrentTime_s + audio_plot_duration_afterCurrentTime_s)
 
 output_video_banner_fontScale = None # will be determined later based on the size of the banner
 output_video_banner_textSize  = None # will be determined later once the font scale is computed
@@ -320,7 +329,7 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
     elif is_audio(filepath):
       if file_index > 0:
         print('\r', end='')
-      print('    Loading file %2d/%2d     ' % (file_index+1, len(filepaths)), end='')
+      print('    Loading file %2d/%2d %s' % (file_index+1, len(filepaths), ' '*15), end='')
       (audio_rate, audio_data) = wavfile.read(filepath)
       num_samples = audio_data.shape[0]
       timestamps_s = start_time_s + np.arange(start=0, stop=num_samples)/audio_rate
@@ -335,7 +344,7 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
       # Resample the data.
       if audio_resample_rate_hz != audio_rate:
         print('\r', end='')
-        print('    Resampling file %2d/%2d     ' % (file_index+1, len(filepaths)), end='')
+        print('    Resampling file %2d/%2d %s' % (file_index+1, len(filepaths), ' '*15), end='')
         fn_interpolate_audio = interpolate.interp1d(
             timestamps_s,  # x values
             audio_data,    # y values
@@ -346,8 +355,43 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
         num_samples = int(num_samples * (audio_resample_rate_hz/audio_rate))
         timestamps_s_resampled = start_time_s + np.arange(start=0, stop=num_samples)/audio_resample_rate_hz
         audio_data_resampled = fn_interpolate_audio(timestamps_s_resampled)
-        media_infos[device_id][filepath] = (timestamps_s_resampled, audio_data_resampled)
-      else:
+        audio_data = audio_data_resampled
+        timestamps_s = timestamps_s_resampled
+      # Compute a spectrogram of the entire file.
+      if audio_plot_spectrogram:
+        print('\r', end='')
+        print('    Computing spectrogram for file %2d/%2d     ' % (file_index+1, len(filepaths)), end='')
+        spectrogram_f, spectrogram_t, spectrogram = \
+          signal.spectrogram(audio_data[:,0], audio_resample_rate_hz,
+                             window=signal.get_window('tukey', int(audio_spectrogram_window_s*audio_resample_rate_hz)),
+                             scaling='density', # density or spectrum (default is density)
+                             nperseg=None)
+        # Truncate to the desired frequency range.
+        min_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[0])
+        max_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[-1])
+        spectrogram_f = spectrogram_f[min_f_index:max_f_index]
+        spectrogram = spectrogram[min_f_index:max_f_index, :]
+        # Determine colorbar levels.
+        colorbar_levels = [0, 0.5] #[0, np.quantile(spectrogram, 0.99)]
+        # Determine epoch timestamps of each entry in the spectrogram.
+        timestamps_s = spectrogram_t + timestamps_s[0]
+        # Determine frequency tick labels.
+        f_tick_targets = np.arange(start=np.floor(spectrogram_f[0]/1000), stop=np.ceil(spectrogram_f[-1]/1000), step=np.ceil(audio_spectrogram_frequency_range[-1]/1000/5))
+        f_tick_indexes = [spectrogram_f.searchsorted(f_tick_target*1000) for f_tick_target in f_tick_targets]
+        f_ticks = [(f_tick_index, '%0.0f' % (spectrogram_f[f_tick_index]/1000)) for f_tick_index in f_tick_indexes]
+        # Determine time tick labels using a sample portion of the spectrogram.
+        t_tick_values = list(np.arange(start=-audio_plot_duration_beforeCurrentTime_s, stop=0, step=2)) \
+                        + list(np.arange(start=0, stop=audio_plot_duration_afterCurrentTime_s, step=2))
+        t_tick_values = np.array([round(t_tick_value) for t_tick_value in t_tick_values])
+        sample_spectrogram_t = np.arange(start=0, stop=audio_plot_length, step=1)*audio_spectrogram_window_s
+        sample_spectrogram_t -= audio_plot_duration_beforeCurrentTime_s
+        t_ticks = []
+        for t_tick_value in t_tick_values:
+          spectrogram_t_index = sample_spectrogram_t.searchsorted(t_tick_value)
+          t_ticks.append((spectrogram_t_index, '%0.0f' % t_tick_value))
+        # Save the information
+        media_infos[device_id][filepath] = (timestamps_s, (spectrogram, t_ticks, f_ticks, colorbar_levels))
+      elif audio_plot_waveform:
         media_infos[device_id][filepath] = (timestamps_s, audio_data)
       if file_index == len(filepaths)-1:
         print()
@@ -386,7 +430,8 @@ if use_pyqtgraph_subplots:
   # data is an image or audio data.
   # label is text to write on an image if desired.
   def update_subplot(layout_widget, layout_specs, data, label=None):
-    if is_image(data):
+    if is_image(data[0]):
+      data = data[0]
       # Draw text on the image if desired.
       # Note that this is done after scaling, since scaling the text could make it unreadable.
       if label is not None:
@@ -396,8 +441,9 @@ if use_pyqtgraph_subplots:
       pixmap = cv2_to_pixmap(data)
       layout_widget.setPixmap(pixmap)
 
-    elif is_audio(data):
+    elif is_audio(data[0]):
       if audio_plot_waveform:
+        data = data[0]
         (audio_plotWidget, h_lines) = layout_widget
         # Update the line items with the new data.
         for channel_index in range(audio_num_channels_toPlot):
@@ -411,27 +457,13 @@ if use_pyqtgraph_subplots:
           audio_plotWidget.enableAutoRange(enable=0.9) # allow automatic scaling that shows 90% of the data
       elif audio_plot_spectrogram:
         (audio_plotWidget, h_heatmap, h_colorbar) = layout_widget
-        # Compute the spectrogram.
-        spectrogram_f, spectrogram_t, spectrogram = \
-          signal.spectrogram(data[:,0], audio_resample_rate_hz,
-                             window=signal.get_window('tukey', int(audio_spectrogram_window_s*audio_resample_rate_hz)),
-                             scaling='density', # density or spectrum (default is density)
-                             nperseg=None)
-        # Truncate to the desired frequency range.
-        min_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[0])
-        max_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[-1])
-        spectrogram_f = spectrogram_f[min_f_index:max_f_index]
-        spectrogram = spectrogram[min_f_index:max_f_index, :]
-        # Determine tick labels.
-        f_tick_targets = np.arange(start=np.floor(spectrogram_f[0]/1000), stop=np.ceil(spectrogram_f[-1]/1000), step=1)
-        f_tick_indexes = [spectrogram_f.searchsorted(f_tick_target*1000) for f_tick_target in f_tick_targets]
-        f_ticks = [(f_tick_index, '%0.0f' % (spectrogram_f[f_tick_index]/1000)) for f_tick_index in f_tick_indexes]
-        t_ticks = [(tick_index, '%0.1f' % t_label) for (tick_index, t_label) in enumerate(spectrogram_t)]
+        (spectrogram, t_ticks, f_ticks, colorbar_levels) = data
+        # Add the current-time marker.
+        spectrogram_toPlot = spectrogram.copy()
+        spectrogram_toPlot[:, audio_plot_length_beforeCurrentTime] = colorbar_levels[-1]
         # Update the heatmap and colorbar.
-        h_heatmap.setImage(spectrogram.T)
-        h_colorbar.setLevels([np.quantile(spectrogram, 0), np.quantile(spectrogram, 1)/4])
-        audio_plotWidget.getAxis('left').setTicks([f_ticks])
-        audio_plotWidget.getAxis('bottom').setTicks([t_ticks[::20]])
+        h_heatmap.setImage(spectrogram_toPlot.T)
+        h_colorbar.setLevels(colorbar_levels)
 
   # Create the plotting layout.
 
@@ -476,17 +508,17 @@ if use_pyqtgraph_subplots:
       grid_layout.addWidget(image_labelWidget, *layout_specs,
                             alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
       grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
-      update_subplot(image_labelWidget, layout_specs, blank_image)
+      update_subplot(image_labelWidget, layout_specs, [blank_image])
       # Store the widget and a black image as dummy data.
       layout_widgets[str(layout_specs)] = image_labelWidget
-      dummy_datas[str(layout_specs)] = 0*blank_image
+      dummy_datas[str(layout_specs)] = [0*blank_image]
     elif is_audio(example_filepath):
       # Create a plot for the audio data, that is set to the target height.
       audio_plotWidget = pyqtgraph.PlotWidget()
       grid_layout.addWidget(audio_plotWidget, *layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
       grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
       # Generate random noise that can be used to preview the visualization layout.
-      random_audio = 500*np.random.normal(size=(audio_plot_length, audio_num_channels_toPlot))
+      random_audio = 500*np.random.normal(size=(1+int(audio_plot_duration_s*audio_resample_rate_hz), audio_num_channels_toPlot))
       # Ensure the widget fills the width of the entire allocated region of subplots.
       audio_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
       # Plot the dummy data, and store handles so the plot can be updated later.
@@ -498,37 +530,39 @@ if use_pyqtgraph_subplots:
         h_lines.append(audio_plotWidget.plot([0, 0], [-500, 500], pen=pyqtgraph.mkPen([0, 150, 150], width=7)))
         # Store the plot and line handles.
         layout_widgets[str(layout_specs)] = (audio_plotWidget, h_lines)
+        # Store dummy data.
+        dummy_datas[str(layout_specs)] = [0*random_audio]
       elif audio_plot_spectrogram:
         # Assumes one channel for now
-        # Create the spectrogram.
+        # Create a random-noise spectrogram.
         spectrogram_f, spectrogram_t, spectrogram = \
           signal.spectrogram(random_audio[:,0], audio_resample_rate_hz,
                              window=signal.get_window('tukey', int(audio_spectrogram_window_s*audio_resample_rate_hz)),
                              scaling='density', # density or spectrum (default is density)
                              nperseg=None)
-        # Truncate to the desired frequency range.
-        min_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[0])
-        max_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[-1])
-        spectrogram_f = spectrogram_f[min_f_index:max_f_index]
-        spectrogram = spectrogram[min_f_index:max_f_index, :]
+        # Use the formatting from the example spectrogram.
+        (_, t_ticks, f_ticks, colorbar_levels) = example_data
         # Plot the spectrogram.
         h_heatmap = pyqtgraph.ImageItem(image=spectrogram.T, hoverable=False)
         audio_plotWidget.addItem(h_heatmap)
         audio_plotWidget.showAxis('bottom')
         audio_plotWidget.showAxis('left')
+        audio_plotWidget.getAxis('left').setTicks([f_ticks])
+        audio_plotWidget.getAxis('bottom').setTicks([t_ticks])
         audio_plotWidget.getAxis('bottom').setLabel('Time [s]')
         audio_plotWidget.getAxis('left').setLabel('Frequency [kHz]')
         # Force an update of the window size (double-check if this is needed?)
         graphics_layout.show()
         graphics_layout.hide()
         # h_plot.setAspectLocked(True)
-        h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap='inferno', interactive=False)
+        h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap=audio_spectrogram_colormap, interactive=False) 
         # Store the various handles to update later.
         layout_widgets[str(layout_specs)] = (audio_plotWidget, h_heatmap, h_colorbar)
-        # Update the plot now, to set formatting such as tick labels.
-        update_subplot(layout_widgets[str(layout_specs)], layout_specs, random_audio)
-      dummy_datas[str(layout_specs)] = 0*random_audio
-
+        # Update the plot now, to set formatting such as colorbar levels.
+        update_subplot(layout_widgets[str(layout_specs)], layout_specs, (spectrogram, t_ticks, f_ticks, colorbar_levels))
+        # Store dummy data.
+        dummy_datas[str(layout_specs)] = (0*spectrogram, t_ticks, f_ticks, colorbar_levels)
+        
   # Draw the visualization with dummy data.
   QtCore.QCoreApplication.processEvents()
   graphics_layout.setWindowTitle('Happy Birthday!')
@@ -576,7 +610,8 @@ if use_opencv_subplots:
   def update_subplot(composite_img, layout_specs, data,
                      image_label=None,
                      audio_plot_handles=None):
-    if is_image(data):
+    if is_image(data[0]):
+      data = data[0]
       # Draw text on the image if desired.
       # Note that this is done after scaling, since scaling the text could make it unreadable.
       if image_label is not None:
@@ -586,8 +621,9 @@ if use_opencv_subplots:
       subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data)
       composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
     
-    elif is_audio(data):
+    elif is_audio(data[0]):
       if audio_plot_waveform:
+        data = data[0]
         (audio_plotWidget, audio_graphics_layout, audio_line_handles) = audio_plot_handles
         # Update the line items with the new data.
         for channel_index in range(audio_num_channels_toPlot):
@@ -607,30 +643,16 @@ if use_opencv_subplots:
         img = scale_image(img, target_width=composite_layout_column_width*colspan,
                                target_height=composite_layout_row_height*rowspan)
         # Update the subplot with the image.
-        composite_img = update_subplot(composite_img, layout_specs, img, image_label=image_label)
+        composite_img = update_subplot(composite_img, layout_specs, [img], image_label=image_label)
       elif audio_plot_spectrogram:
         (audio_plotWidget, audio_graphics_exporter, h_heatmap, h_colorbar) = audio_plot_handles
-        # Compute the spectrogram.
-        spectrogram_f, spectrogram_t, spectrogram = \
-          signal.spectrogram(data[:,0], audio_resample_rate_hz,
-                             window=signal.get_window('tukey', int(audio_spectrogram_window_s*audio_resample_rate_hz)),
-                             scaling='density', # density or spectrum (default is density)
-                             nperseg=None)
-        # Truncate to the desired frequency range.
-        min_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[0])
-        max_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[-1])
-        spectrogram_f = spectrogram_f[min_f_index:max_f_index]
-        spectrogram = spectrogram[min_f_index:max_f_index, :]
-        # Determine tick labels.
-        f_tick_targets = np.arange(start=np.floor(spectrogram_f[0]/1000), stop=np.ceil(spectrogram_f[-1]/1000), step=1)
-        f_tick_indexes = [spectrogram_f.searchsorted(f_tick_target*1000) for f_tick_target in f_tick_targets]
-        f_ticks = [(f_tick_index, '%0.0f' % (spectrogram_f[f_tick_index]/1000)) for f_tick_index in f_tick_indexes]
-        t_ticks = [(tick_index, '%0.1f' % t_label) for (tick_index, t_label) in enumerate(spectrogram_t)]
+        (spectrogram, t_ticks, f_ticks, colorbar_levels) = data
+        # Add the current-time marker.
+        spectrogram_toPlot = spectrogram.copy()
+        spectrogram_toPlot[:, audio_plot_length_beforeCurrentTime] = np.amax(spectrogram)
         # Update the heatmap and colorbar.
-        h_heatmap.setImage(spectrogram.T)
-        h_colorbar.setLevels([np.quantile(spectrogram, 0), np.quantile(spectrogram, 1)/4])
-        audio_plotWidget.getAxis('left').setTicks([f_ticks])
-        audio_plotWidget.getAxis('bottom').setTicks([t_ticks[::20]])
+        h_heatmap.setImage(spectrogram_toPlot.T)
+        h_colorbar.setLevels(colorbar_levels)
         # Grab the plot as an image.
         img = audio_graphics_exporter.export(toBytes=True)
         img = qimage_to_numpy(img)
@@ -639,7 +661,7 @@ if use_opencv_subplots:
         img = scale_image(img, target_width=composite_layout_column_width*colspan,
                                target_height=composite_layout_row_height*rowspan)
         # Update the subplot with the image.
-        composite_img = update_subplot(composite_img, layout_specs, img, image_label=image_label)
+        composite_img = update_subplot(composite_img, layout_specs, [img], image_label=image_label)
     
     return composite_img
   
@@ -681,7 +703,7 @@ if use_opencv_subplots:
       # Create a gray image the size of the real image that can be used to see the composite layout.
       blank_image = 100*np.ones_like(example_image)
       # Update the dummy composite image with the dummy image.
-      update_subplot(composite_img_dummy, layout_specs, example_image,
+      update_subplot(composite_img_dummy, layout_specs, [example_image],
                      image_label=device_friendlyName)
       # Store a black image as dummy data.
       # Make it the full size of the subplot, rather than the size of the example image,
@@ -690,7 +712,7 @@ if use_opencv_subplots:
       (start_row_index, end_row_index, start_col_index, end_col_index) = get_slice_indexes_for_subplot_update(layout_specs)
       subplot_width = end_col_index-start_col_index
       subplot_height = end_row_index-start_row_index
-      dummy_datas[str(layout_specs)] = np.zeros((subplot_height, subplot_width, 3), dtype=np.uint8)
+      dummy_datas[str(layout_specs)] = [np.zeros((subplot_height, subplot_width, 3), dtype=np.uint8)]
     elif is_audio(example_filepath):
       # Initialize the layout.
       # The top level will be a GraphicsLayout, since that seems easier to export to an image.
@@ -707,7 +729,7 @@ if use_opencv_subplots:
       grid_layout.setRowMinimumHeight(row, composite_layout_row_height*rowspan)
       audio_plotWidget.setMinimumWidth(composite_layout_column_width*colspan)
       # Generate random noise that can be used to preview the visualization layout.
-      random_audio = 500*np.random.normal(size=(audio_plot_length, audio_num_channels_toPlot))
+      random_audio = 500*np.random.normal(size=(1+int(audio_plot_duration_s*audio_resample_rate_hz), audio_num_channels_toPlot))
       if audio_plot_waveform:
         # Plot the dummy data, and store handles to the lines so their lines can be updated later.
         # Currently assumes 2 channels of audio data.
@@ -719,46 +741,48 @@ if use_opencv_subplots:
         # Store the line handles.
         audio_plot_handles[str(layout_specs)] = (audio_plotWidget, graphics_layout, h_lines)
         # Update the example composite image.
-        update_subplot(composite_img_dummy, layout_specs, random_audio,
+        update_subplot(composite_img_dummy, layout_specs, [random_audio],
                        image_label=None,
                        audio_plot_handles=audio_plot_handles[str(layout_specs)])
+        # Store dummy data.
+        dummy_datas[str(layout_specs)] = [0*random_audio]
       elif audio_plot_spectrogram:
         # Assumes one channel for now
-        # Create the spectrogram.
+        # Create a random-noise spectrogram.
         spectrogram_f, spectrogram_t, spectrogram = \
           signal.spectrogram(random_audio[:,0], audio_resample_rate_hz,
                              window=signal.get_window('tukey', int(audio_spectrogram_window_s*audio_resample_rate_hz)),
                              scaling='density', # density or spectrum (default is density)
                              nperseg=None)
-        # Truncate to the desired frequency range.
-        min_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[0])
-        max_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[-1])
-        spectrogram_f = spectrogram_f[min_f_index:max_f_index]
-        spectrogram = spectrogram[min_f_index:max_f_index, :]
+        # Use the formatting from the example spectrogram.
+        (_, t_ticks, f_ticks, colorbar_levels) = example_data
         # Plot the spectrogram.
         h_heatmap = pyqtgraph.ImageItem(image=spectrogram.T, hoverable=False)
         audio_plotWidget.addItem(h_heatmap)
         audio_plotWidget.showAxis('bottom')
         audio_plotWidget.showAxis('left')
+        audio_plotWidget.getAxis('left').setTicks([f_ticks])
+        audio_plotWidget.getAxis('bottom').setTicks([t_ticks])
         audio_plotWidget.getAxis('bottom').setLabel('Time [s]')
         audio_plotWidget.getAxis('left').setLabel('Frequency [kHz]')
         # Force an update of the window size (double-check if this is needed?)
         graphics_layout.show()
         graphics_layout.hide()
         # h_plot.setAspectLocked(True)
-        h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap='inferno', interactive=False)
+        h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap=audio_spectrogram_colormap, interactive=False) 
         # Create an exporter to get the plot as an image.
         audio_graphics_exporter = pyqtgraph.exporters.ImageExporter(audio_plotWidget.plotItem)
         audio_graphics_exporter.parameters()['width'] = composite_layout_column_width*colspan
         # Store the various handles to update later.
         audio_plot_handles[str(layout_specs)] = (audio_plotWidget, audio_graphics_exporter, h_heatmap, h_colorbar)
         # Update the plot now, to set formatting such as tick labels.
-        update_subplot(composite_img_dummy, layout_specs, random_audio,
+        update_subplot(composite_img_dummy, layout_specs, (spectrogram, t_ticks, f_ticks, colorbar_levels),
                        image_label=None,
                        audio_plot_handles=audio_plot_handles[str(layout_specs)])
-      # Store the overall plot handle and dummy data.
+        # Store dummy data.
+        dummy_datas[str(layout_specs)] = (0*spectrogram, t_ticks, f_ticks, colorbar_levels)
+      # Store the overall plot handle.
       audio_grid_layouts[str(layout_specs)] = grid_layout
-      dummy_datas[str(layout_specs)] = 0*random_audio
       # Show the window if desired.
       QtCore.QCoreApplication.processEvents()
       if show_visualization_window:
@@ -848,10 +872,10 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
             # Update the subplot with the video frame.
             t0 = time.time()
             if use_pyqtgraph_subplots:
-              update_subplot(layout_widgets[str(layout_specs)], layout_specs, img, label=device_friendlyName)
+              update_subplot(layout_widgets[str(layout_specs)], layout_specs, [img], label=device_friendlyName)
             elif use_opencv_subplots:
               img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-              update_subplot(composite_img_current, layout_specs, img, image_label=device_friendlyName)
+              update_subplot(composite_img_current, layout_specs, [img], image_label=device_friendlyName)
             layouts_updated[str(layout_specs)] = True
             layouts_showing_dummyData[str(layout_specs)] = False
             layouts_prevState[str(layout_specs)] = (filepath, data_index)
@@ -879,10 +903,10 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           # Update the subplot with the photo.
           t0 = time.time()
           if use_pyqtgraph_subplots:
-            update_subplot(layout_widgets[str(layout_specs)], layout_specs, img, label=device_friendlyName)
+            update_subplot(layout_widgets[str(layout_specs)], layout_specs, [img], label=device_friendlyName)
           elif use_opencv_subplots:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            update_subplot(composite_img_current, layout_specs, img, image_label=device_friendlyName)
+            update_subplot(composite_img_current, layout_specs, [img], image_label=device_friendlyName)
           layouts_updated[str(layout_specs)] = True
           layouts_showing_dummyData[str(layout_specs)] = False
           layouts_prevState[str(layout_specs)] = (filepath, data_index)
@@ -901,26 +925,34 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
             layouts_showing_dummyData[str(layout_specs)] = False
             break # don't check any more media for this device
           t0 = time.time()
-          # Get the audio rate and number of channels.
-          audio_sps = round((timestamps_s.shape[0]-1)/(timestamps_s[-1] - timestamps_s[0])) # NOTE: using first/last indexes is much faster than using max/min
-          audio_num_channels = data.shape[1]
           # Get the start/end indexes of the data to plot.
           # Note that these may be negative or beyond the bounds of the data, indicating padding is needed.
           start_index = data_index - audio_plot_length_beforeCurrentTime
           end_index = data_index + audio_plot_length_afterCurrentTime + 1
           # Determine how much silence should be added to the data to fill the plot.
+          data_t_length = data.shape[0] if audio_plot_waveform else data[0].shape[1]
           num_toPad_pre = 0 if start_index >= 0 else -start_index
-          num_toPad_post = 0 if end_index <= data.shape[0] else end_index - data.shape[0]
+          num_toPad_post = 0 if end_index <= data_t_length else end_index - data_t_length
           # Adjust the start/end indexes to be within the data bounds.
           start_index = max(0, start_index)
-          end_index = min(data.shape[0], end_index)
+          end_index = min(data_t_length, end_index)
           # Get the data and pad it as needed.
-          data_toPlot = data[start_index:end_index]
-          data_toPlot = np.vstack([np.zeros((num_toPad_pre, audio_num_channels)),
-                                   data_toPlot,
-                                   np.zeros((num_toPad_post, audio_num_channels))])
+          if audio_plot_waveform:
+            audio_num_channels = data.shape[1]
+            data_toPlot = data[start_index:end_index]
+            data_toPlot = np.vstack([np.zeros((num_toPad_pre, audio_num_channels)),
+                                     data_toPlot,
+                                     np.zeros((num_toPad_post, audio_num_channels))])
+            data_toPlot = [data_toPlot]
+          if audio_plot_spectrogram:
+            (spectrogram, t_ticks, f_ticks, colorbar_levels) = data
+            data_toPlot = spectrogram[:, start_index:end_index]
+            data_toPlot = np.hstack([np.zeros((spectrogram.shape[0], num_toPad_pre)),
+                                     data_toPlot,
+                                     np.zeros((spectrogram.shape[0], num_toPad_post))])
+            data_toPlot = (data_toPlot, t_ticks, f_ticks, colorbar_levels)
           duration_s_audioParsing += time.time() - t0
-          # Update the subplot with the waveform segment.
+          # Update the subplot with the waveform or spectrogram segment.
           t0 = time.time()
           if use_pyqtgraph_subplots:
             update_subplot(layout_widgets[str(layout_specs)], layout_specs, data_toPlot)
@@ -944,7 +976,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
       if use_pyqtgraph_subplots:
         update_subplot(layout_widgets[str(layout_specs)], layout_specs, dummy_datas[str(layout_specs)])
       elif use_opencv_subplots:
-        if is_audio(dummy_datas[str(layout_specs)]):
+        if is_audio(dummy_datas[str(layout_specs)][0]):
           update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
                          image_label=None,
                          audio_plot_handles=audio_plot_handles[str(layout_specs)])
@@ -1031,8 +1063,8 @@ print()
 ######################################################
 
 if output_video_compressed_rate_MB_s is not None:
-  print('Compressing the output video to %g MB/s (total target size: %0.2f MB)'
-        % (output_video_compressed_rate_MB_s, output_video_compressed_rate_MB_s*output_video_duration_s))
+  print('Compressing the output video to %0.2f MB (target rate %g MB/s)'
+        % (output_video_compressed_rate_MB_s*output_video_duration_s, output_video_compressed_rate_MB_s))
   t0 = time.time()
   output_video_compressed_filepath = '%s_compressed%sMBs%s' \
                                       % (os.path.splitext(output_video_filepath)[0],
