@@ -13,23 +13,25 @@ import cv2
 import pyqtgraph
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from pyqtgraph.Qt.QtGui import QPixmap, QImage
+import pyqtgraph.exporters
 
 from helpers import *
 
 use_waveform = True
 use_spectrogram = False
-only_plot_one_test = False
+only_plot_one_test = True
 
 data_dir_root = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
 
 filepath = os.path.join(data_dir_root, 'DSWP-KASHMIR_MIXPRE6-1',
-                              'CETI23-281.1688831930000.WAV')
+                              # 'CETI23-281.1688831930000.WAV')
+                              'CETI23-280.1688831582000.WAV')
 
 num_audio_channels = 1
 audio_pens = [pyqtgraph.mkPen([255, 255, 255], width=1),
               pyqtgraph.mkPen([255, 0, 255], width=1)]
 
-audio_resample_rate_hz = 48000 # original rate is 96000
+audio_resample_rate_hz = 24000 # original rate is 96000
 audio_plot_duration_beforeCurrentTime_s = 2
 audio_plot_duration_afterCurrentTime_s  = 8
 
@@ -70,28 +72,55 @@ print('loaded')
 
 if only_plot_one_test and use_waveform:
   app = QtWidgets.QApplication([])
-  start_index = int(160*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
-  end_index = int(160*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
+  start_index = int(109.7*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
+  end_index = int(109.7*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
   # start_index = 0
   # end_index = audio_data.shape[0]-1
+  graphics_layout = pyqtgraph.GraphicsLayoutWidget()
+  grid_layout = QtWidgets.QGridLayout()
+  graphics_layout.setLayout(grid_layout)
+  audio_plotWidget = pyqtgraph.PlotWidget()
+  layout_specs = (4, 0, 1, 4)
+  composite_layout_column_width = 400
+  composite_layout_row_height = composite_layout_column_width // (1+7/9)
+  grid_layout.addWidget(audio_plotWidget, *layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
+  grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
+  audio_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
+  h_plot = audio_plotWidget.plot(np.array(range(start_index, end_index))/audio_resample_rate_hz, audio_data[start_index:end_index, 0])
   t0 = time.time()
-  pyqtgraph.plot(np.array(range(start_index, end_index))/audio_resample_rate_hz, audio_data[start_index:end_index, 0])
-  print(time.time() - t0)
+  h_plot.setData(np.array(range(start_index, end_index))/audio_resample_rate_hz, audio_data[start_index:end_index, 0])
+  print('waveform', time.time() - t0)
+  t0 = time.time()
+  img = graphics_layout.grab().toImage()
+  img = qimage_to_numpy(img)
+  img = np.array(img[:,:,0:3])
+  print('waveform grab', time.time()-t0)
+  cv2.imshow('test', img)
+  cv2.waitKey(0)
+  graphics_layout.show()
   app.exec()
   import sys
   sys.exit()
 
 if only_plot_one_test and use_spectrogram:
   t0 = time.time()
-  start_index = int(160*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
-  end_index = int(160*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
+  start_index = int(109.7*audio_resample_rate_hz) - audio_plot_length_beforeCurrentTime
+  end_index = int(109.7*audio_resample_rate_hz) + audio_plot_length_afterCurrentTime
   print(audio_data[start_index:end_index,0].shape)
   f, t, Sxx = signal.spectrogram(audio_data[start_index:end_index,0], audio_resample_rate_hz,
-                                 window=signal.get_window('tukey', int(0.1*audio_resample_rate_hz)),
+                                 window=signal.get_window('tukey', int(0.05*audio_resample_rate_hz)),
+                                 scaling='density', # density or spectrum
                                  nperseg=None)
   print('spectogram creation duration', time.time() - t0)
   print('t shape', t.shape)
   print('f shape', f.shape)
+  min_f = 1e3
+  max_f = 9e3
+  min_f_index = f.searchsorted(min_f)
+  max_f_index = f.searchsorted(max_f)
+  f = f[min_f_index:max_f_index]
+  print(f)
+  Sxx = Sxx[min_f_index:max_f_index, :]
   # print(np.amin(Sxx), np.amax(Sxx))
   # print('2')
   # app = QtWidgets.QApplication([])
@@ -143,27 +172,72 @@ if only_plot_one_test and use_spectrogram:
   # app.exec()
   
   app = QtWidgets.QApplication([])
-  win = pyqtgraph.GraphicsLayoutWidget()
-  h_plot = win.addPlot()
+  graphics_layout = pyqtgraph.GraphicsLayoutWidget()
+  grid_layout = QtWidgets.QGridLayout()
+  graphics_layout.setLayout(grid_layout)
+  spectrogram_plotWidget = pyqtgraph.PlotWidget()
+  layout_specs = (4, 0, 1, 4)
+  composite_layout_column_width = 400
+  composite_layout_row_height = composite_layout_column_width // (1+7/9)
+  grid_layout.addWidget(spectrogram_plotWidget, *layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
+  grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
+  spectrogram_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
   h_heatmap = pyqtgraph.ImageItem(image=Sxx, hoverable=False)
-  h_plot.addItem(h_heatmap, title='yay')
-  h_plot.showAxis('bottom')
-  h_plot.showAxis('left')
-  h_plot.getAxis('bottom').setLabel('Time [s]')
-  h_plot.getAxis('left').setLabel('Frequency [kHz]')
+  spectrogram_plotWidget.addItem(h_heatmap, title='yay')
+  spectrogram_plotWidget.showAxis('bottom')
+  spectrogram_plotWidget.showAxis('left')
+  spectrogram_plotWidget.getAxis('bottom').setLabel('Time [s]')
+  spectrogram_plotWidget.getAxis('left').setLabel('Frequency [kHz]')
   # h_plot.setAspectLocked(True)
-  f_ticks = [(tick_index, '%0.1f' % (f_label/1000)) for (tick_index, f_label) in enumerate(f)]
-  t_ticks = [(tick_index, '%0.1f' % t_label) for (tick_index, t_label) in enumerate(t)]
-  h_colorbar = h_plot.addColorBar(h_heatmap, colorMap='inferno', interactive=True)
+  h_colorbar = spectrogram_plotWidget.addColorBar(h_heatmap, colorMap='inferno', interactive=True)
   t0 = time.time()
-  h_heatmap.setImage(np.flipud(Sxx).T)
-  h_colorbar.setLevels([np.quantile(Sxx, 0), np.quantile(Sxx, 1)])
-  h_plot.getAxis('left').setTicks([f_ticks[::1000]])
-  h_plot.getAxis('bottom').setTicks([t_ticks[::40]])
+  f_tick_targets = np.arange(start=np.floor(f[0]/1000), stop=np.ceil(f[-1]/1000), step=1)
+  f_tick_indexes = [f.searchsorted(f_tick_target*1000) for f_tick_target in f_tick_targets]
+  print(f_tick_targets)
+  print(f_tick_indexes)
+  print([f[f_tick_target_index] for f_tick_target_index in f_tick_indexes])
+  f_ticks = [(f_tick_index, '%0.0f' % (f[f_tick_index]/1000)) for f_tick_index in f_tick_indexes]
+  print(f_ticks)
+  # f_ticks = [(tick_index, '%0.1f' % (f_label/1000)) for (tick_index, f_label) in enumerate(f)]
+  t_ticks = [(tick_index, '%0.1f' % t_label) for (tick_index, t_label) in enumerate(t)]
+  # t0 = time.time()
+  # for n in range(100):
+  h_heatmap.setImage(Sxx.T)
+  h_colorbar.setLevels([np.quantile(Sxx, 0), np.quantile(Sxx, 1)/4])
+  spectrogram_plotWidget.getAxis('left').setTicks([f_ticks])
+  spectrogram_plotWidget.getAxis('bottom').setTicks([t_ticks[::20]])
   QtCore.QCoreApplication.processEvents()
-  print('heatmap', time.time() - t0)
-  win.show()
-  app.exec()
+  graphics_layout.show()
+  graphics_layout.hide()
+  t0 = time.time()
+  for n in range(100):
+    SxxT = Sxx.T.copy()
+    SxxT[n*2,:] = np.quantile(Sxx, 1)/4*0.4
+    h_heatmap.setImage(SxxT)
+    h_colorbar.setLevels([np.quantile(Sxx, 0), np.quantile(Sxx, 1)/4])
+    spectrogram_plotWidget.getAxis('left').setTicks([f_ticks])
+    spectrogram_plotWidget.getAxis('bottom').setTicks([t_ticks[::20]])
+    # print('heatmap', time.time() - t0)
+    # t0 = time.time()
+    # img = graphics_layout.grab().toImage()
+    # img = qimage_to_numpy(img)
+    # img = np.array(img[:,:,0:3])
+    # print('heatmap grab', time.time()-t0, img.shape)
+    # cv2.imshow('test', img)
+    # cv2.waitKey(0)
+    exporter = pyqtgraph.exporters.ImageExporter(spectrogram_plotWidget.plotItem)
+    exporter.parameters()['width'] = 1200
+    # t0 = time.time()
+    img = exporter.export(toBytes=True)
+    img = qimage_to_numpy(img)
+    # print('heatmap export', time.time()-t0, img.shape)
+    # cv2.imshow('test', img)
+    # cv2.waitKey(100)
+    # graphics_layout.show()
+    # app.exec()
+  print('heatmap plot and export', (time.time()-t0)/100)
+  cv2.imshow('test', img)
+  cv2.waitKey(0)
   
   # import matplotlib.pyplot as plt
   # plt.pcolormesh(t, f, Sxx)
