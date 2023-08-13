@@ -59,7 +59,7 @@ epoch_offsets_toAdd_s = {
   'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 204,
   'JD-CANON_REBEL_T5I'         : 14.28,
   'DSWP-CANON_EOS_70D-1'       : 4*3600,
-  'DSWP-KASHMIR_MIXPRE6-1'     : 0,
+  'DSWP-KASHMIR_MIXPRE6-1'     : 32.7160,
   'Misc/Aluma'                 : 0,
   'Misc/Baumgartner'           : 0,
   'Misc/Pagani'                : 0,
@@ -93,13 +93,13 @@ device_friendlyNames = {
 #   11:45:48 see blood in water
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
-output_video_start_time_str = '2023-07-08 11:44:00 -0400'
+# output_video_start_time_str = '2023-07-08 11:44:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:48:45 -0400'
 # output_video_start_time_str = '2023-07-08 11:49:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
-# output_video_start_time_str = '2023-07-08 11:35:00 -0400'
+output_video_start_time_str = '2023-07-08 11:35:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:52:00 -0400'
-output_video_duration_s = 16*60
+output_video_duration_s = 60*60
 output_video_fps = 10
 
 # Define the output video size/resolution and compression.
@@ -119,12 +119,12 @@ output_video_banner_bg_color   = [100, 100, 100] # BGR
 output_video_banner_text_color = [255, 255,   0] # BGR
 
 # Configure audio plotting
-audio_resample_rate_hz = 96000 # original rate is 96000
+audio_resample_rate_hz = 36000 # original rate is 96000
 audio_plot_duration_beforeCurrentTime_s = 5
 audio_plot_duration_afterCurrentTime_s  = 10
 audio_num_channels_toPlot = 1
-audio_plot_waveform = False
-audio_plot_spectrogram = True # Will force audio_num_channels_toPlot = 1 for now
+audio_plot_waveform = True
+audio_plot_spectrogram = False # Will force audio_num_channels_toPlot = 1 for now
 audio_waveform_plot_pens = [pyqtgraph.mkPen([255, 255, 255], width=4),
                             pyqtgraph.mkPen([255, 0, 255], width=1)]
 audio_spectrogram_frequency_range = [0e3, min(40e3, audio_resample_rate_hz//2)]
