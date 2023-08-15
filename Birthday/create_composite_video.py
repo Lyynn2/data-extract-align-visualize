@@ -45,6 +45,7 @@ composite_layout = OrderedDict([
   ('Phone (Pagani)'       , (3, 1, 1, 1)),
   ('Phone (SalinoHugg)'   , (3, 2, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
+  # ('Hydrophone (Mevorach)', (0, 0, 1, 1)),
   ])
 
 # Specify the time zone offset to get local time of this data collection day from UTC.
@@ -54,16 +55,16 @@ localtime_offset_str = '-0400'
 
 # Specify offsets to add to timestamps extracted from filenames.
 epoch_offsets_toAdd_s = {
-  'CETI-DJI_MAVIC3-1'          : 0.47,
-  'DSWP-DJI_MAVIC3-2'          : 2.17,
-  'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 204,
-  'JD-CANON_REBEL_T5I'         : 14.28,
-  'DSWP-CANON_EOS_70D-1'       : 4*3600,
-  'DSWP-KASHMIR_MIXPRE6-1'     : 32.7160,
-  'Misc/Aluma'                 : 0,
-  'Misc/Baumgartner'           : 0,
-  'Misc/Pagani'                : 0,
-  'Misc/SalinoHugg'            : 0,
+  'CETI-DJI_MAVIC3-1'          : 0.972,
+  'DSWP-DJI_MAVIC3-2'          : 2.145,
+  'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 203.81,
+  'JD-CANON_REBEL_T5I'         : 14.689,
+  'DSWP-CANON_EOS_70D-1'       : 4*3600 + 87.189,
+  'DSWP-KASHMIR_MIXPRE6-1'     : 32.709,
+  'Misc/Aluma'                 : -0.571,
+  'Misc/Baumgartner'           : 3.376,
+  'Misc/Pagani'                : 0, # used as reference time
+  'Misc/SalinoHugg'            : -0.117,
   'Misc/DelPreto_Pixel5'       : 0,
   'Misc/DelPreto_GoPro'        : 0,
 }
@@ -97,16 +98,19 @@ device_friendlyNames = {
 # output_video_start_time_str = '2023-07-08 11:48:45 -0400'
 # output_video_start_time_str = '2023-07-08 11:49:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
+# output_video_start_time_str = '2023-07-08 11:53:00 -0400'
 output_video_start_time_str = '2023-07-08 11:35:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:52:00 -0400'
+# output_video_start_time_str = '2023-07-08 11:53:38 -0400'
+# output_video_start_time_str = '2023-07-08 11:53:53 -0400'
 output_video_duration_s = 60*60
-output_video_fps = 10
+output_video_fps = 30
 
 # Define the output video size/resolution and compression.
 composite_layout_column_width = 400 # also defines the scaling/resolution of photos/videos
 subplot_border_size = 5 # ignored if the pyqtgraph subplot method is used
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
-output_video_compressed_rate_MB_s = 0.5 # None to not compress the video
+output_video_compressed_rate_MB_s = 1.5 # None to not compress the video
 
 # Define audio track added to the output video.
 add_audio_track_to_output_video = True
@@ -119,17 +123,20 @@ output_video_banner_bg_color   = [100, 100, 100] # BGR
 output_video_banner_text_color = [255, 255,   0] # BGR
 
 # Configure audio plotting
-audio_resample_rate_hz = 36000 # original rate is 96000
+audio_resample_rate_hz = 96000 # original rate is 96000
 audio_plot_duration_beforeCurrentTime_s = 5
 audio_plot_duration_afterCurrentTime_s  = 10
 audio_num_channels_toPlot = 1
-audio_plot_waveform = True
-audio_plot_spectrogram = False # Will force audio_num_channels_toPlot = 1 for now
+audio_plot_waveform = False
+audio_plot_spectrogram = True # Will force audio_num_channels_toPlot = 1 for now
 audio_waveform_plot_pens = [pyqtgraph.mkPen([255, 255, 255], width=4),
                             pyqtgraph.mkPen([255, 0, 255], width=1)]
 audio_spectrogram_frequency_range = [0e3, min(40e3, audio_resample_rate_hz//2)]
 audio_spectrogram_window_s = 0.03
-audio_spectrogram_colormap = 'CET-L16' # 'inferno', 'CET-CBTL1', 'CET-L1', 'CET-L16', 'CET-L3', 'CET-R1'
+# audio_spectrogram_colormap = 'CET-L16' # 'inferno', 'CET-CBTL1', 'CET-L1', 'CET-L16', 'CET-L3', 'CET-R1'
+audio_spectrogram_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
+# audio_spectrogram_colormap = pyqtgraph.colormap.get('nipy_spectral', source='matplotlib', skipCache=True)
+# audio_spectrogram_colormap = pyqtgraph.colormap.get('turbo', source='matplotlib', skipCache=True)
 
 # Configure how device timestamps are matched with output video frame timestamps.
 timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
@@ -283,7 +290,9 @@ media_infos = {}
 
 print()
 print('Extracting timestamps and pointers to data for every frame/photo/audio')
-for (device_id, device_friendlyName) in device_friendlyNames.items():
+for (device_friendlyName, layout_specs) in composite_layout.items():
+  (row, col, rowspan, colspan) = layout_specs
+  device_id = device_friendlyName_to_id(device_friendlyName)
   media_infos[device_id] = {}
   # Find data files for this device.
   if 'Misc' in device_id:
@@ -317,7 +326,6 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
     start_time_s += epoch_offsets_toAdd_s[device_id]
     # Process the data/timestamps.
     if is_video(filepath):
-      (row, col, rowspan, colspan) = composite_layout[device_friendlyName]
       (video_reader, frame_rate, num_frames) = get_video_reader(filepath,
                                                                 target_width=colspan*composite_layout_column_width)
       frame_duration_s = 1/frame_rate
@@ -372,7 +380,7 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
         spectrogram_f = spectrogram_f[min_f_index:max_f_index]
         spectrogram = spectrogram[min_f_index:max_f_index, :]
         # Determine colorbar levels.
-        colorbar_levels = [0, 0.5] #[0, np.quantile(spectrogram, 0.99)]
+        colorbar_levels = [0, 0.4] #[0, np.quantile(spectrogram, 0.99)]
         # Determine epoch timestamps of each entry in the spectrogram.
         timestamps_s = spectrogram_t + timestamps_s[0]
         # Determine frequency tick labels.
@@ -399,7 +407,7 @@ for (device_id, device_friendlyName) in device_friendlyNames.items():
 # Remove devices with no data for the composite video.
 device_ids_to_remove = []
 for (device_id, device_friendlyName) in device_friendlyNames.items():
-  if len(media_infos[device_id]) == 0:
+  if device_id in media_infos and len(media_infos[device_id]) == 0:
     device_ids_to_remove.append(device_id)
 if len(device_ids_to_remove) > 0:
   print('Ignoring the following %d devices that have no data for the composite video: %s' % (len(device_ids_to_remove), str(device_ids_to_remove)))
@@ -458,6 +466,8 @@ if use_pyqtgraph_subplots:
       elif audio_plot_spectrogram:
         (audio_plotWidget, h_heatmap, h_colorbar) = layout_widget
         (spectrogram, t_ticks, f_ticks, colorbar_levels) = data
+        colorbar_levels = colorbar_levels.copy()
+        colorbar_levels[-1] = min(np.amax(spectrogram), colorbar_levels[-1])
         # Add the current-time marker.
         spectrogram_toPlot = spectrogram.copy()
         spectrogram_toPlot[:, audio_plot_length_beforeCurrentTime] = colorbar_levels[-1]
@@ -647,9 +657,11 @@ if use_opencv_subplots:
       elif audio_plot_spectrogram:
         (audio_plotWidget, audio_graphics_exporter, h_heatmap, h_colorbar) = audio_plot_handles
         (spectrogram, t_ticks, f_ticks, colorbar_levels) = data
+        colorbar_levels = colorbar_levels.copy()
+        colorbar_levels[-1] = min(np.amax(spectrogram), colorbar_levels[-1])
         # Add the current-time marker.
         spectrogram_toPlot = spectrogram.copy()
-        spectrogram_toPlot[:, audio_plot_length_beforeCurrentTime] = np.amax(spectrogram)
+        spectrogram_toPlot[:, audio_plot_length_beforeCurrentTime] = colorbar_levels[-1]
         # Update the heatmap and colorbar.
         h_heatmap.setImage(spectrogram_toPlot.T)
         h_colorbar.setLevels(colorbar_levels)
@@ -662,7 +674,6 @@ if use_opencv_subplots:
                                target_height=composite_layout_row_height*rowspan)
         # Update the subplot with the image.
         composite_img = update_subplot(composite_img, layout_specs, [img], image_label=image_label)
-    
     return composite_img
   
   # Create the blank image to use as the background.
