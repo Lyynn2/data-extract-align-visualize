@@ -46,7 +46,7 @@ composite_layout = OrderedDict([
   ('Phone (SalinoHugg)'   , (3, 2, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
   # ('Hydrophone (Mevorach)', (0, 0, 1, 1)),
-  ])
+])
 
 # Specify the time zone offset to get local time of this data collection day from UTC.
 # Note that in the future this could probably be determined automatically.
@@ -55,16 +55,16 @@ localtime_offset_str = '-0400'
 
 # Specify offsets to add to timestamps extracted from filenames.
 epoch_offsets_toAdd_s = {
-  'CETI-DJI_MAVIC3-1'          : 0.972,
-  'DSWP-DJI_MAVIC3-2'          : 2.145,
-  'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 203.81,
-  'JD-CANON_REBEL_T5I'         : 14.689,
-  'DSWP-CANON_EOS_70D-1'       : 4*3600 + 87.189,
-  'DSWP-KASHMIR_MIXPRE6-1'     : 32.709,
-  'Misc/Aluma'                 : -0.571,
-  'Misc/Baumgartner'           : 3.376,
+  'CETI-DJI_MAVIC3-1'          : 0.7986,
+  'DSWP-DJI_MAVIC3-2'          : 2.1083,
+  'DG-CANON_EOS_1DX_MARK_III-1': 14603.8151,
+  'JD-CANON_REBEL_T5I'         : 14.3797,
+  'DSWP-CANON_EOS_70D-1'       : 14486.213,
+  'DSWP-KASHMIR_MIXPRE6-1'     : 32.7085,
+  'Misc/Aluma'                 : -0.5595,
+  'Misc/Baumgartner'           : 3.303,
   'Misc/Pagani'                : 0, # used as reference time
-  'Misc/SalinoHugg'            : -0.117,
+  'Misc/SalinoHugg'            : -0.1383,
   'Misc/DelPreto_Pixel5'       : 0,
   'Misc/DelPreto_GoPro'        : 0,
 }
@@ -99,11 +99,13 @@ device_friendlyNames = {
 # output_video_start_time_str = '2023-07-08 11:49:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:00 -0400'
-output_video_start_time_str = '2023-07-08 11:35:00 -0400'
+# output_video_start_time_str = '2023-07-08 11:35:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:52:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:38 -0400'
+output_video_start_time_str = '2023-07-08 11:53:46 -0400'
+# output_video_start_time_str = '2023-07-08 11:54:32 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
-output_video_duration_s = 60*60
+output_video_duration_s = 4
 output_video_fps = 30
 
 # Define the output video size/resolution and compression.
@@ -176,14 +178,15 @@ if use_opencv_subplots:
 if use_pyqtgraph_subplots:
   output_video_width = composite_layout_column_width*output_video_num_cols
   output_video_height = composite_layout_row_height*output_video_num_rows
-  
+
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
 output_video_filepath = os.path.join(data_dir_root,
-                                     'composite_video_fps%d_duration%d_start%d_colWidth%d.mp4'
+                                     'composite_video_fps%d_duration%d_start%d_colWidth%d_audio%d%s.mp4'
                                      % (output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
-                                        composite_layout_column_width))
+                                        composite_layout_column_width,
+                                        audio_resample_rate_hz, 'spectrogram' if audio_plot_spectrogram else 'waveform'))
 
 
 ######################################################
@@ -225,7 +228,7 @@ def get_index_for_time_s(timestamps_s, target_time_s, timestamp_to_target_thresh
     return None
   # We found a good timestamp! Return its index.
   return best_index
-  
+
 # Add a banner to the output frame that displays the current timestamp.
 def add_timestamp_banner(img, timestamp_s):
   global output_video_banner_height_fraction, output_video_banner_bg_color, output_video_banner_fontScale, output_video_banner_textSize
@@ -270,7 +273,7 @@ def add_timestamp_banner(img, timestamp_s):
   return img
 
 
-  
+
 ######################################################
 # LOAD TIMESTAMPS AND DATA POINTERS
 ######################################################
@@ -431,7 +434,7 @@ if use_pyqtgraph_subplots:
   # # The below will make the background white if desired (the default is black).
   # pyqtgraph.setConfigOption('background', 'w')
   # pyqtgraph.setConfigOption('foreground', 'k')
-
+  
   # Define a helper to update a subplot with new device data.
   # layout_widget is the item to update, such as an image view or an audio plot.
   # layout_specs is (row, col, rowspan, colspan) of the subplot location.
@@ -448,7 +451,7 @@ if use_pyqtgraph_subplots:
       # Update the subplot with the image.
       pixmap = cv2_to_pixmap(data)
       layout_widget.setPixmap(pixmap)
-
+    
     elif is_audio(data[0]):
       if audio_plot_waveform:
         data = data[0]
@@ -474,9 +477,9 @@ if use_pyqtgraph_subplots:
         # Update the heatmap and colorbar.
         h_heatmap.setImage(spectrogram_toPlot.T)
         h_colorbar.setLevels(colorbar_levels)
-
+  
   # Create the plotting layout.
-
+  
   # Store the widgets/plots, and dummy data for each one so it can be cleared when no device data is available.
   # Will use layout_specs as the key, in case multiple devices are in the same subplot.
   layout_widgets = {}
@@ -565,14 +568,14 @@ if use_pyqtgraph_subplots:
         graphics_layout.show()
         graphics_layout.hide()
         # h_plot.setAspectLocked(True)
-        h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap=audio_spectrogram_colormap, interactive=False) 
+        h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap=audio_spectrogram_colormap, interactive=False)
         # Store the various handles to update later.
         layout_widgets[str(layout_specs)] = (audio_plotWidget, h_heatmap, h_colorbar)
         # Update the plot now, to set formatting such as colorbar levels.
         update_subplot(layout_widgets[str(layout_specs)], layout_specs, (spectrogram, t_ticks, f_ticks, colorbar_levels))
         # Store dummy data.
         dummy_datas[str(layout_specs)] = (0*spectrogram, t_ticks, f_ticks, colorbar_levels)
-        
+  
   # Draw the visualization with dummy data.
   QtCore.QCoreApplication.processEvents()
   graphics_layout.setWindowTitle('Happy Birthday!')
@@ -610,7 +613,7 @@ if use_opencv_subplots:
     # Increment end indexes since the end indexes computed above were considered inclusive,
     #  but slicing will be exclusive of the end indexes.
     return (start_row_index, end_row_index+1, start_col_index, end_col_index+1)
-    
+  
   # Define a helper to update a subplot with new device data.
   # composite_img is the composite frame image to update.
   # layout_specs is (row, col, rowspan, colspan) of the subplot location.
@@ -679,7 +682,7 @@ if use_opencv_subplots:
   # Create the blank image to use as the background.
   composite_img_blank = np.zeros(shape=(output_video_height, output_video_width, 3), dtype=np.uint8)
   composite_img_dummy = composite_img_blank.copy()
-
+  
   # Store dummy data for each subplot so it can be cleared when no device data is available.
   # Also store the widgets/plots for each audio visualization so they can be updated later.
   # Will use layout_specs as the key, in case multiple devices are in the same subplot.
@@ -780,7 +783,7 @@ if use_opencv_subplots:
         graphics_layout.show()
         graphics_layout.hide()
         # h_plot.setAspectLocked(True)
-        h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap=audio_spectrogram_colormap, interactive=False) 
+        h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap=audio_spectrogram_colormap, interactive=False)
         # Create an exporter to get the plot as an image.
         audio_graphics_exporter = pyqtgraph.exporters.ImageExporter(audio_plotWidget.plotItem)
         audio_graphics_exporter.parameters()['width'] = composite_layout_column_width*colspan
@@ -798,7 +801,7 @@ if use_opencv_subplots:
       QtCore.QCoreApplication.processEvents()
       if show_visualization_window:
         graphics_layout.show()
-        
+  
   # Show the window if desired.
   if show_visualization_window or debug_composite_layout:
     cv2.imshow('Happy Birthday!', composite_img_dummy)
@@ -807,7 +810,7 @@ if use_opencv_subplots:
       cv2.waitKey(0)
       import sys
       sys.exit()
-    
+
 
 ######################################################
 # CREATE A VIDEO
@@ -848,7 +851,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Mark that no subplot layouts have been updated.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     layouts_updated[str(layout_specs)] = False
-
+  
   # Loop through each specified device stream.
   # Note that multiple devices may be mapped to the same layout position;
   #  in that case the last device with data for this timestep will be used.
@@ -977,7 +980,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           duration_s_updatePlots_total += time.time() - t0
           duration_s_updatePlots_audio += time.time() - t0
           break # don't check any more media for this device
-
+  
   # If a layout was not updated, show its dummy data.
   # But only spend time updating it if it isn't already showing dummy data.
   for (device_friendlyName, layout_specs) in composite_layout.items():
@@ -998,13 +1001,13 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
       layouts_showing_dummyData[str(layout_specs)] = True
       duration_s_updatePlots_total += time.time() - t0
       layouts_prevState[str(layout_specs)] = None
-
+  
   # Refresh the figure with the updated subplots.
   if use_pyqtgraph_subplots:
     t0 = time.time()
     QtCore.QCoreApplication.processEvents()
     duration_s_updatePlots_total += time.time() - t0
-
+  
   # Render the figure into a composite frame image.
   if use_pyqtgraph_subplots:
     t0 = time.time()
@@ -1078,9 +1081,9 @@ if output_video_compressed_rate_MB_s is not None:
         % (output_video_compressed_rate_MB_s*output_video_duration_s, output_video_compressed_rate_MB_s))
   t0 = time.time()
   output_video_compressed_filepath = '%s_compressed%sMBs%s' \
-                                      % (os.path.splitext(output_video_filepath)[0],
-                                         ('%0.2f' % output_video_compressed_rate_MB_s).replace('.','-'),
-                                         os.path.splitext(output_video_filepath)[1])
+                                     % (os.path.splitext(output_video_filepath)[0],
+                                        ('%0.2f' % output_video_compressed_rate_MB_s).replace('.','-'),
+                                        os.path.splitext(output_video_filepath)[1])
   compress_video(output_video_filepath, output_video_compressed_filepath,
                  output_video_compressed_rate_MB_s*1024*1024*8)
   print('Compression completed in %0.3f seconds' % (time.time() - t0))
@@ -1122,7 +1125,7 @@ if add_audio_track_to_output_video:
       # Load the audio segment if it is valid (if the audio file overlaps with the video).
       if audio_clip_duration_s > 0:
         audio_clip = AudioFileClip(filepath).subclip(t_start=audio_clip_start_offset_s,
-                                                           t_end=audio_clip_start_offset_s+audio_clip_duration_s)
+                                                     t_end=audio_clip_start_offset_s+audio_clip_duration_s)
         
         # Compute the video time at which this audio clip should start.
         audio_clip_start_time_s = audio_start_time_s + audio_clip_start_offset_s
