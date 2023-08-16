@@ -164,7 +164,7 @@ def scale_image(img, target_width, target_height):
 def draw_text_on_image(img, text, pos=(0, 0),
                        font_scale=8, text_width_ratio=None,
                        font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX,
-                       text_color=(255, 255, 255), text_bg_color=(100, 100, 100)
+                       text_color=None, text_bg_color=None
                        ):
   # If desired, compute a font scale based on the target width ratio.
   if text_width_ratio is not None:
@@ -186,8 +186,10 @@ def draw_text_on_image(img, text, pos=(0, 0),
     x = img.shape[1]-text_w
   pos = [x, y]
   # Draw the background shading.
+  text_bg_color = text_bg_color or (100, 100, 100)
   cv2.rectangle(img, pos, (x + text_w, y + text_h), text_bg_color, -1)
   # Draw the text.
+  text_color = text_color or (255, 255, 255)
   cv2.putText(img, text, (x, int(y + text_h + font_scale - 1)),
               font, font_scale, text_color, font_thickness)
 

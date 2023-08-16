@@ -9,6 +9,7 @@ import numpy as np
 from scipy import signal
 from scipy.io import wavfile
 from scipy import interpolate
+from scipy import spatial
 from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
 import proglog
 
@@ -95,11 +96,21 @@ device_friendlyNames = {
 
 # Define the start/end time of the video.
 # Some notable times are below for reference:
-#   10:20:12 start of CETI Mavic
+#   10:20:12.514 + 0.7986 start of CETI Mavic
+#   10:51:16.972 + 2.1083 start of DSWP Mavic
+#   10:53:46.000 + 32.7085 start of hydrophone
+#   15:19:15.834 + 0.7986 end of CETI Mavic
+#   14:14:32.143 + 2.1083 end of DSWP Mavic
+#   15:29:10.000 + 1008 + 32.7085 end of hydrophone
+#   10:20:13.3126 overall start
+#   15:46:30.7085 overall end
+#   19577.3959 overall duration
+#
 #   11:45:15 see baby in mom
 #   11:45:48 see blood in water
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
+#
 # output_video_start_time_str = '2023-07-08 11:44:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:45:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:48:45 -0400'
@@ -113,11 +124,13 @@ output_video_start_time_str = '2023-07-08 11:35:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:54:32 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
 # output_video_start_time_str = '2023-07-08 11:54:55 -0400'
+# output_video_start_time_str = '2023-07-08 11:54:00 -0400'
+# output_video_start_time_str = '2023-07-08 10:20:13.3126 -0400'
 output_video_duration_s = 60*60
 output_video_fps = 30
 
 # Define the output video size/resolution and compression.
-composite_layout_column_width = 300 # also defines the scaling/resolution of photos/videos
+composite_layout_column_width = 400 # also defines the scaling/resolution of photos/videos
 subplot_border_size = 5 # ignored if the pyqtgraph subplot method is used
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
 output_video_compressed_rate_MB_s = 0.5 * (output_video_fps/10) # None to not compress the video
@@ -149,12 +162,21 @@ audio_spectrogram_colormap = pyqtgraph.colormap.get('gist_stern', source='matplo
 # audio_spectrogram_colormap = pyqtgraph.colormap.get('turbo', source='matplotlib', skipCache=True)
 
 # Configure drone plotting.
-drone_plot_colors = [(100, 100, 255), (100, 255, 100)]
+drone_plot_reference_location_lonLat = [-61.373179, 15.306914]
+conversion_factor_lat_to_m = (111.32)*1000
+conversion_factor_lon_to_m = (40075 * np.cos(np.radians(drone_plot_reference_location_lonLat[1])) / 360) * 1000
+drone_lat_to_m = lambda lat: (lat - drone_plot_reference_location_lonLat[1]) * conversion_factor_lat_to_m
+drone_lon_to_m = lambda lon: (lon - drone_plot_reference_location_lonLat[0]) * conversion_factor_lon_to_m
+drone_plot_minRange_m = 400
+drone_plot_rangePad = 20
+drone_plot_tickSpacing_m = {'minor':20, 'major':200}
+drone_plot_colors = [(255, 0, 255), (255, 255, 0)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
+drone_plot_symbolPens = [pyqtgraph.mkPen(np.flip(drone_plot_colors[drone_index]), width=2) for drone_index in range(len(drone_plot_colors))]
 drone_plot_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
-drone_plot_color_lookup = drone_plot_colormap.getLookupTable(start=0, stop=1, nPts=512)
-drone_plot_color_lookup_keys = np.linspace(start=5, stop=100, num=512)
-# drone_plot_symbol_brush = drone_plot_colormap.getBrush(span=(10, 100))
-drone_plot_symbol_pen = pyqtgraph.mkPen([255, 50, 50], width=1)
+drone_plot_color_lookup = drone_plot_colormap.getLookupTable(start=0, stop=1, nPts=500)
+drone_plot_color_lookup_keys = np.linspace(start=0, stop=125, num=500)
+drone_colorbar_tickSpacing_m = {'major':25, 'minor':25}
+drone_plot_symbolSize = 15
 
 # Configure how device timestamps are matched with output video frame timestamps.
 timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
@@ -307,12 +329,8 @@ def add_timestamp_banner(img, timestamp_s):
 #   If filepath points to an image:
 #     timestamps_s is a single-element numpy array with the epoch timestamps of the image
 #     data is the filepath again
-media_infos = {}
-drone_datas = {}
-min_latitude = None
-max_latitude = None
-min_longitude = None
-max_longitude = None
+media_infos = OrderedDict()
+drone_datas = OrderedDict()
 
 print()
 print('Extracting timestamps and pointers to data for every frame/photo/audio')
@@ -366,14 +384,6 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
           timestamps_s = timestamps_s + localtime_offset_s
         drone_datas.setdefault(device_id, {})
         drone_datas[device_id][filepath] = (timestamps_s, drone_data)
-        if min_latitude is None or min(drone_data['latitude']) < min_latitude:
-          min_latitude = min(drone_data['latitude'])
-        if max_latitude is None or max(drone_data['latitude']) > max_latitude:
-          max_latitude = max(drone_data['latitude'])
-        if min_longitude is None or min(drone_data['longitude']) < min_longitude:
-          min_longitude = min(drone_data['longitude'])
-        if max_longitude is None or max(drone_data['longitude']) > max_longitude:
-          max_longitude = max(drone_data['longitude'])
       else:
         frame_duration_s = 1/frame_rate
         timestamps_s = start_time_s + np.arange(start=0, stop=num_frames)*frame_duration_s
@@ -450,11 +460,6 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
         media_infos[device_id][filepath] = (timestamps_s, audio_data)
       if file_index == len(filepaths)-1:
         print()
-
-print('min_latitude', min_latitude)
-print('max_latitude', max_latitude)
-print('min_longitude', min_longitude)
-print('max_longitude', max_longitude)
 
 # Remove devices with no data for the composite video.
 device_ids_to_remove = []
@@ -670,7 +675,7 @@ if use_opencv_subplots:
   # image_label is text to write on an image if desired.
   # audio_graphics_layout and plot_handles are the audio/drone plot items if updating audio/drones.
   def update_subplot(composite_img, layout_specs, data,
-                     image_label=None,
+                     image_label=None, image_label_color=None,
                      plot_handles=None):
     
     if is_image(data[0]):
@@ -679,7 +684,8 @@ if use_opencv_subplots:
       # Note that this is done after scaling, since scaling the text could make it unreadable.
       if image_label is not None:
         draw_text_on_image(data, image_label, pos=(0,-1),
-                           font_scale=0.7, font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX)
+                           font_scale=0.7, font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX,
+                           text_color=image_label_color)
       # Update the subplot within the image.
       subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data)
       composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
@@ -730,16 +736,44 @@ if use_opencv_subplots:
     
     elif is_drone_data(data[0]):
       # Set the lines to the new data points.
+      drone_coordinates = []
       (drone_plotWidget, drone_graphics_layout, drone_line_handles) = plot_handles
       for (drone_index, drone_data) in enumerate(data):
+        x = drone_lon_to_m(drone_data['longitude'])
+        y = drone_lat_to_m(drone_data['latitude'])
+        drone_coordinates.append([x, y])
         drone_plot_color_index = drone_plot_color_lookup_keys.searchsorted(drone_data['altitude_relative_m'])
         drone_plot_color_index = min(drone_plot_color_index, drone_plot_color_lookup.shape[0]-1)
         drone_line_handles[drone_index].setData(
-            [drone_data['longitude']], [drone_data['latitude']],
-            symbolSize=12 if drone_data['altitude_relative_m'] > 0 else 0,
-            symbolBrush=np.atleast_2d(drone_plot_color_lookup[drone_plot_color_index]),
-            symbolPen=drone_plot_symbol_pen,
+            [x], [y],
+            symbolSize=drone_plot_symbolSize if ('is_dummy_data' not in drone_data) or (not drone_data['is_dummy_data']) else 0,
+            symbolBrush=pyqtgraph.mkColor(*drone_plot_color_lookup[drone_plot_color_index], 255),
+            symbolPen=drone_plot_symbolPens[drone_index],
         )
+      drone_coordinates = np.array(drone_coordinates)
+      # Update the plot range.
+      max_distance_m = np.amax(spatial.distance.cdist(drone_coordinates, drone_coordinates))
+      plot_range = max(drone_plot_minRange_m, 2*max_distance_m)
+      x_extremes = [np.amin(drone_coordinates[:,0]), np.amax(drone_coordinates[:,0])]
+      y_extremes = [np.amin(drone_coordinates[:,1]), np.amax(drone_coordinates[:,1])]
+      x_limits = drone_plotWidget.getAxis('bottom').range
+      y_limits = drone_plotWidget.getAxis('left').range
+      if x_extremes[0] < x_limits[0] + drone_plot_rangePad:
+        x_limits[0] = (x_extremes[0] - drone_plot_rangePad)
+        x_limits[1] = x_limits[0] + plot_range
+      if x_extremes[1] > x_limits[1] - drone_plot_rangePad:
+        x_limits[1] = (x_extremes[1] + drone_plot_rangePad)
+        x_limits[0] = x_limits[1] - plot_range
+      if y_extremes[0] < y_limits[0] + drone_plot_rangePad:
+        y_limits[0] = (y_extremes[0] - drone_plot_rangePad)
+        y_limits[1] = y_limits[0] + plot_range
+      if y_extremes[1] > y_limits[1] - drone_plot_rangePad:
+        y_limits[1] = (y_extremes[1] + drone_plot_rangePad)
+        y_limits[0] = y_limits[1] - plot_range
+      drone_plotWidget.setAspectLocked(False)
+      drone_plotWidget.setXRange(*x_limits, padding=0)
+      drone_plotWidget.setYRange(*y_limits, padding=0)
+      drone_plotWidget.setAspectLocked(True)
       # Grab the plot as an image.
       img = drone_graphics_layout.grab().toImage()
       img = qimage_to_numpy(img)
@@ -793,7 +827,8 @@ if use_opencv_subplots:
       blank_image = 100*np.ones_like(example_image)
       # Update the dummy composite image with the dummy image.
       update_subplot(composite_img_dummy, layout_specs, [example_image],
-                     image_label=device_friendlyName)
+                     image_label=device_friendlyName,
+                     image_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
       # Store a black image as dummy data.
       # Make it the full size of the subplot, rather than the size of the example image,
       #  since other data for this subplot may be a different size than this first example
@@ -889,26 +924,35 @@ if use_opencv_subplots:
     # The top level will be a GraphicsLayout, since that seems easier to export to an image.
     # Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
     drone_graphics_layout = pyqtgraph.GraphicsLayoutWidget()
-    drone_grid_layout = QtWidgets.QGridLayout()
-    drone_graphics_layout.setLayout(drone_grid_layout)
+    # drone_grid_layout = QtWidgets.QGridLayout()
+    # drone_graphics_layout.setLayout(drone_grid_layout)
     # Create a plot for the data, that is set to the target size.
-    drone_plotWidget = pyqtgraph.PlotWidget()
-    drone_grid_layout.addWidget(drone_plotWidget, *drone_data_layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
+    drone_plotWidget = pyqtgraph.PlotItem()
+    drone_graphics_layout.addItem(drone_plotWidget, *(0, 0, 1, 1))
+                                # alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
     drone_graphics_layout.setGeometry(10, 10, composite_layout_column_width*colspan,
                                       composite_layout_row_height*rowspan)
     # Ensure the widget fills the width of the entire allocated region of subplots.
-    drone_grid_layout.setRowMinimumHeight(row, composite_layout_row_height*rowspan)
-    drone_plotWidget.setMinimumWidth(composite_layout_column_width*colspan)
+    # drone_grid_layout.setRowMinimumHeight(row, composite_layout_row_height*rowspan)
+    # drone_plotWidget.setMinimumWidth(composite_layout_column_width*colspan)
     # Set the bounds and the aspect ratio.
-    drone_plotWidget.setXRange(-61.4858, -61.48330)
-    drone_plotWidget.setYRange(15.36820, 15.37400)
-    # drone_plotWidget.setXRange(-61.48565, -61.48387)
-    # drone_plotWidget.setYRange(15.37046, 15.38142)
-    # drone_plotWidget.setXRange(-61.49462, -61.47972)
-    # drone_plotWidget.setYRange(15.36767, 15.3876)
-    # drone_plotWidget.setXRange(-61.48563, -61.48387)
-    # drone_plotWidget.setYRange(15.37068, 15.37155)
+    (x_center, y_center) = drone_plot_reference_location_lonLat
+    x_center = drone_lon_to_m(x_center)
+    y_center = drone_lat_to_m(y_center)
+    x_limits = x_center + np.array([-drone_plot_minRange_m/2, drone_plot_minRange_m/2])
+    y_limits = y_center + np.array([-drone_plot_minRange_m/2, drone_plot_minRange_m/2])
+    drone_plotWidget.setXRange(*x_limits, padding=0)
+    drone_plotWidget.setYRange(*y_limits, padding=0)
+    drone_plotWidget.getAxis('left').setTickSpacing(**drone_plot_tickSpacing_m)
+    drone_plotWidget.getAxis('bottom').setTickSpacing(**drone_plot_tickSpacing_m)
+    drone_plotWidget.getAxis('left').setLabel('Y From Home [m]')
+    drone_plotWidget.getAxis('bottom').setLabel('X From Home [m]')
     drone_plotWidget.setAspectLocked(True)
+    drone_plotWidget.showGrid(x=True, y=True, alpha=0.8)
+    drone_plotWidget.getAxis('bottom').setPen(width=10)
+    drone_plotWidget.getAxis('left').setPen(width=10)
+    drone_plotWidget.getAxis('bottom').setZValue(-1000) # put the grid behind the plotted data
+    drone_plotWidget.getAxis('left').setZValue(-1000) # put the grid behind the plotted data
     # Generate dummy data for each drone.
     def get_example_drone_data():
       return {
@@ -922,8 +966,16 @@ if use_opencv_subplots:
     for (drone_index, drone_data) in enumerate(drone_dummy_data):
       h_lines.append(
           drone_plotWidget.plot(x=[drone_data['longitude']], y=[drone_data['latitude']],
-                                pen=None, symbolBrush=drone_plot_colors[drone_index],
-                                symbol='o', symbolSize=drone_data['altitude_relative_m']))
+                                symbol='o', symbolSize=drone_plot_symbolSize,
+                                symbolpen=drone_plot_symbolPens[drone_index]))
+    # Add a colorbar.
+    drone_altitude_colorbar = pyqtgraph.ColorBarItem(colorMap=drone_plot_colormap,
+                                                     values=(np.min(drone_plot_color_lookup_keys), np.max(drone_plot_color_lookup_keys)),
+                                                     width=12, # default 25
+                                                     interactive=False)
+    drone_altitude_colorbar.axis.setTickSpacing(**drone_colorbar_tickSpacing_m)
+    drone_altitude_colorbar.axis.setLabel('Altitude [m]')
+    drone_graphics_layout.addItem(drone_altitude_colorbar, *(0, 1, 1, 1))
     # Store the line handles.
     drone_plot_handles = (drone_plotWidget, drone_graphics_layout, h_lines)
     # Update the example composite image.
@@ -931,9 +983,9 @@ if use_opencv_subplots:
                    image_label=None,
                    plot_handles=drone_plot_handles)
     # Store the dummy data.
-    # Make the size of the point 0 so it will disappear.
+    # Add a marker to indicate that it is dummy data.
     for (drone_index, dummy_data) in enumerate(drone_dummy_data):
-      drone_dummy_data[drone_index]['altitude_relative_m'] = 0
+      drone_dummy_data[drone_index]['is_dummy_data'] = True
     dummy_datas[str(drone_data_layout_specs)] = drone_dummy_data
     # Show the window if desired.
     QtCore.QCoreApplication.processEvents()
@@ -1030,7 +1082,9 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
               update_subplot(layout_widgets[str(layout_specs)], layout_specs, [img], label=device_friendlyName)
             elif use_opencv_subplots:
               img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-              update_subplot(composite_img_current, layout_specs, [img], image_label=device_friendlyName)
+              update_subplot(composite_img_current, layout_specs, [img],
+                             image_label=device_friendlyName,
+                             image_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
             layouts_updated[str(layout_specs)] = True
             layouts_showing_dummyData[str(layout_specs)] = False
             layouts_prevState[str(layout_specs)] = (filepath, data_index)
@@ -1061,7 +1115,9 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
             update_subplot(layout_widgets[str(layout_specs)], layout_specs, [img], label=device_friendlyName)
           elif use_opencv_subplots:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            update_subplot(composite_img_current, layout_specs, [img], image_label=device_friendlyName)
+            update_subplot(composite_img_current, layout_specs, [img],
+                           image_label=device_friendlyName,
+                           image_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
           layouts_updated[str(layout_specs)] = True
           layouts_showing_dummyData[str(layout_specs)] = False
           layouts_prevState[str(layout_specs)] = (filepath, data_index)
@@ -1137,19 +1193,20 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
               'altitude_relative_m': drone_data['altitude_relative_m'][data_index],
             }
             break # don't check any more media for this device
-      print(drone_data_toPlot)
       # Only spend time updating the plot if it changed since last frame.
+      
       if drone_data_toPlot == layouts_prevState[str(layout_specs)]:
         layouts_updated[str(layout_specs)] = True
         layouts_showing_dummyData[str(layout_specs)] = False
       else:
-        print('Updating!')
+        t0 = time.time()
         update_subplot(composite_img_current, layout_specs, drone_data_toPlot,
                        image_label=None,
                        plot_handles=drone_plot_handles)
         layouts_updated[str(layout_specs)] = True
         layouts_showing_dummyData[str(layout_specs)] = False
         layouts_prevState[str(layout_specs)] = (drone_data_toPlot)
+        duration_s_updatePlots_total += time.time() - t0
   
   # If a layout was not updated, show its dummy data.
   # But only spend time updating it if it isn't already showing dummy data.
