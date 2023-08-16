@@ -32,6 +32,8 @@ def time_str_to_time_s(time_str):
 ############################################
 
 def get_file_extension(filepath):
+  if not isinstance(filepath, str):
+    return None
   file_extension = os.path.splitext(filepath)[-1]
   file_extension = file_extension.lower()
   return file_extension
@@ -41,22 +43,29 @@ def is_video(filepath_or_data):
     return False
   if isinstance(filepath_or_data, cv2.VideoCapture):
     return True
-  return get_file_extension(filepath_or_data) in ['.mp4', '.mov', '.avi', '.lrv', '.lrf']
+  return get_file_extension(filepath_or_data) in ['.mp4', '.mov', '.avi', '.lrv', '.lrf'] or False
 
 def is_image(filepath_or_data):
   if filepath_or_data is None:
     return False
   if isinstance(filepath_or_data, np.ndarray):
     return filepath_or_data.ndim == 3
-  return get_file_extension(filepath_or_data) in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+  return get_file_extension(filepath_or_data) in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff'] or False
 
 def is_audio(filepath_or_data):
   if filepath_or_data is None:
     return False
   if isinstance(filepath_or_data, np.ndarray):
     return filepath_or_data.ndim == 2
-  return get_file_extension(filepath_or_data) in ['.wav']
+  return get_file_extension(filepath_or_data) in ['.wav'] or False
 
+def is_drone_data(filepath_or_data):
+  if filepath_or_data is None:
+    return False
+  if isinstance(filepath_or_data, dict) and 'altitude_relative_m' in filepath_or_data:
+    return True
+  return get_file_extension(filepath_or_data) in ['.srt'] or False
+  
 ############################################
 # IMAGES / VIDEOS
 ############################################
@@ -107,8 +116,12 @@ def load_frame(video_reader, frame_index, target_width=None, target_height=None,
     if success and (target_width is not None and target_height is not None):
       img = scale_image(img, target_width=target_width, target_height=target_height)
   elif method.lower() == 'decord':
-    img = video_reader[frame_index].asnumpy()
-    success = (img is not None)
+    try:
+      img = video_reader[frame_index].asnumpy()
+      success = (img is not None)
+    except:
+      img = None
+      success = False
     if success and (target_width is not None and target_height is not None):
       img = scale_image(img, target_width=target_width, target_height=target_height)
   return (success, img)

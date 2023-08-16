@@ -52,7 +52,14 @@ yranges = [{
   'Misc/Pagani'                : [-0.15, 0.15],
   'Misc/Baumgartner'           : [-0.07, 0.07],
   'Misc/Aluma'                 : [-0.11, 0.11],
-}]
+},
+  {
+    'DSWP-KASHMIR_MIXPRE6-1'     : [-400, 400],
+    'Misc/Pagani'                : [-0.15, 0.15],
+    'Misc/Baumgartner'           : [-0.07, 0.07],
+    'Misc/Aluma'                 : [-0.11, 0.11],
+  }
+]
 
 # Specify offsets to add to timestamps extracted from filenames.
 epoch_offsets_toAdd_s = {
@@ -61,9 +68,9 @@ epoch_offsets_toAdd_s = {
   'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 203.81,
   'JD-CANON_REBEL_T5I'         : 14.689,
   'DSWP-CANON_EOS_70D-1'       : 4*3600 + 87.189,
-  'DSWP-KASHMIR_MIXPRE6-1'     : 32.709, #32.701, #32.7160
-  'Misc/Aluma'                 : -0.571,
-  'Misc/Baumgartner'           : 3.376, #2.940, #3.28,
+  'DSWP-KASHMIR_MIXPRE6-1'     : 32.7085, #32.701, #32.7160
+  'Misc/Aluma'                 : -0.5595,
+  'Misc/Baumgartner'           : 3.303, #2.940, #3.28,
   'Misc/Pagani'                : 0, # used as reference time
   'Misc/SalinoHugg'            : -0.117,
   'Misc/DelPreto_Pixel5'       : 0,
