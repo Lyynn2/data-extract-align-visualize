@@ -68,6 +68,10 @@ epoch_offsets_toAdd_s = {
   'Misc/DelPreto_Pixel5'       : 0,
   'Misc/DelPreto_GoPro'        : 0,
 }
+drone_timestamps_are_local_time = {
+  'CETI-DJI_MAVIC3-1'          : False,
+  'DSWP-DJI_MAVIC3-2'          : True,
+}
 
 # Specify friendly names for each device that will be printed on the output video.
 # This also specifies the device IDs that exist, and directories will be searched accordingly.
@@ -101,8 +105,8 @@ device_friendlyNames = {
 # output_video_start_time_str = '2023-07-08 11:53:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:35:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:52:00 -0400'
-# output_video_start_time_str = '2023-07-08 11:53:38 -0400'
-output_video_start_time_str = '2023-07-08 11:53:46 -0400'
+output_video_start_time_str = '2023-07-08 11:53:38 -0400'
+# output_video_start_time_str = '2023-07-08 11:53:46 -0400'
 # output_video_start_time_str = '2023-07-08 11:54:32 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
 output_video_duration_s = 4
@@ -112,7 +116,7 @@ output_video_fps = 30
 composite_layout_column_width = 400 # also defines the scaling/resolution of photos/videos
 subplot_border_size = 5 # ignored if the pyqtgraph subplot method is used
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
-output_video_compressed_rate_MB_s = 1.5 # None to not compress the video
+output_video_compressed_rate_MB_s = 0.5 * (output_video_fps/10) # None to not compress the video
 
 # Define audio track added to the output video.
 add_audio_track_to_output_video = True
@@ -142,8 +146,8 @@ audio_spectrogram_colormap = pyqtgraph.colormap.get('gist_stern', source='matplo
 
 # Configure how device timestamps are matched with output video frame timestamps.
 timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
-  'video': (1/output_video_fps*0.5, 1/output_video_fps*0.5),
-  'audio': (1/output_video_fps*0.5, 1/output_video_fps*0.5),
+  'video': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
+  'audio': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
   'image': (1, 1/output_video_fps), # first entry controls how long an image will be shown
 }
 
@@ -331,8 +335,17 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
     if is_video(filepath):
       (video_reader, frame_rate, num_frames) = get_video_reader(filepath,
                                                                 target_width=colspan*composite_layout_column_width)
-      frame_duration_s = 1/frame_rate
-      timestamps_s = start_time_s + np.arange(start=0, stop=num_frames)*frame_duration_s
+      # Extract frame timestamps from an SRT file if one exists.
+      # Otherwise, generate timestamps assuming a constant frame rate.
+      drone_data = get_drone_data(filepath, timezone_offset_str=localtime_offset_str)
+      if drone_data is not None:
+        timestamps_s = drone_data['timestamp_s']
+        timestamps_s = timestamps_s + epoch_offsets_toAdd_s[device_id]
+        if not drone_timestamps_are_local_time[device_id]:
+          timestamps_s = timestamps_s + localtime_offset_s
+      else:
+        frame_duration_s = 1/frame_rate
+        timestamps_s = start_time_s + np.arange(start=0, stop=num_frames)*frame_duration_s
       media_infos[device_id][filepath] = (timestamps_s, video_reader)
     elif is_image(filepath):
       timestamps_s = np.array([start_time_s])

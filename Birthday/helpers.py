@@ -3,6 +3,7 @@ import cv2
 import decord
 from PIL import Image
 import ffmpeg
+import pysrt
 
 import dateutil.parser
 from datetime import datetime
@@ -232,4 +233,54 @@ def compress_video(input_filepath, output_filepath, target_total_bitrate_b_s):
                 ).overwrite_output().run()
 
 
+############################################
+# DRONE DATA
+############################################
+
+def get_drone_data(video_filepath, timezone_offset_str=''):
+  srt_filepath = '%s.srt' % (os.path.splitext(video_filepath)[0])
+  if not os.path.exists(srt_filepath):
+    return None
+  srt = pysrt.open(srt_filepath)
+  num_frames = len(srt)
+  drone_data = {
+    'timestamp_str': ['']*num_frames,
+    'timestamp_s': np.nan*np.ones(shape=(num_frames,)),
+    'iso': np.nan*np.ones(shape=(num_frames,)),
+    'shutter': np.nan*np.ones(shape=(num_frames, 2)),
+    'f_number': np.nan*np.ones(shape=(num_frames,)),
+    'exposure_value': np.nan*np.ones(shape=(num_frames,)),
+    'color_temperature': np.nan*np.ones(shape=(num_frames,)),
+    'focal_length': np.nan*np.ones(shape=(num_frames,)),
+    'color_mode': ['']*num_frames,
+    'latitude': np.nan*np.ones(shape=(num_frames,)),
+    'longitude': np.nan*np.ones(shape=(num_frames,)),
+    'altitude_relative_m': np.nan*np.ones(shape=(num_frames,)),
+    'altitude_absolute_m': np.nan*np.ones(shape=(num_frames,)),
+  }
+  
+  for (frame_index, srt_frame) in enumerate(srt):
+    text_lines = srt_frame.text_without_tags.split('\n')
+    drone_data['timestamp_str'][frame_index] = text_lines[1]
+    drone_data['timestamp_s'][frame_index] = time_str_to_time_s(text_lines[1])
+    data_line = text_lines[2]
+    data_line = data_line.replace(' ', '')
+    drone_data['iso'][frame_index] = float(data_line.split('[iso:')[1].split(']')[0].strip())
+    drone_data['shutter'][frame_index] = [float(x.strip()) for x in data_line.split('[shutter:')[1].split(']')[0].split('/')]
+    drone_data['f_number'][frame_index] = float(data_line.split('[fnum:')[1].split(']')[0].strip())
+    drone_data['exposure_value'][frame_index] = float(data_line.split('[ev:')[1].split(']')[0].strip())
+    drone_data['color_temperature'][frame_index] = float(data_line.split('[ct:')[1].split(']')[0].strip())
+    drone_data['focal_length'][frame_index] = float(data_line.split('[focal_len:')[1].split(']')[0].strip())
+    drone_data['color_mode'][frame_index] = data_line.split('[color_md:')[1].split(']')[0].strip()
+    drone_data['latitude'][frame_index] = float(data_line.split('[latitude:')[1].split(']')[0].strip())
+    drone_data['longitude'][frame_index] = float(data_line.split('[longitude:')[1].split(']')[0].strip())
+    drone_data['altitude_relative_m'][frame_index] = float(data_line.split('[rel_alt:')[1].split('abs_alt')[0].strip())
+    drone_data['altitude_absolute_m'][frame_index] = float(data_line.split('abs_alt:')[1].split(']')[0].strip())
+  
+  return drone_data
+  
+  
+  
+  
+  
 
