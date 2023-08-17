@@ -161,10 +161,11 @@ def scale_image(img, target_width, target_height):
 # Draw text on an image, with a shaded background.
 # If the y position is -1, will place the text at the bottom of the image.
 # If the x position is -1, will place the text at the left of the image.
+# If x or y is between 0 and 1, will place at that ratio of the width or height.
 def draw_text_on_image(img, text, pos=(0, 0),
                        font_scale=8, text_width_ratio=None,
                        font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX,
-                       text_color=None, text_bg_color=None
+                       text_color=None, text_bg_color=None, preview_only=False,
                        ):
   # If desired, compute a font scale based on the target width ratio.
   if text_width_ratio is not None:
@@ -177,21 +178,28 @@ def draw_text_on_image(img, text, pos=(0, 0),
     font_scale -= 0.2
   # Compute the text dimensions.
   (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
-  # Place the text at the bottom and/or left if desired.
+  # Place the text at the bottom and/or left if desired, and handle fractional placement if desired.
   pos = list(pos)
   x, y = pos
   if y == -1:
     y = img.shape[0]-round(1.25*text_h)
+  elif y > 0 and y < 1:
+    y = round(img.shape[0]*y + text_h/2)
   if x == -1:
     x = img.shape[1]-text_w
+  elif x > 0 and x < 1:
+    x = round((img.shape[1] - text_w)*x)
   pos = [x, y]
   # Draw the background shading.
-  text_bg_color = text_bg_color or (100, 100, 100)
-  cv2.rectangle(img, pos, (x + text_w, y + text_h), text_bg_color, -1)
+  if not preview_only:
+    text_bg_color = text_bg_color or (100, 100, 100)
+    cv2.rectangle(img, pos, (x + text_w, y + text_h), text_bg_color, -1)
   # Draw the text.
-  text_color = text_color or (255, 255, 255)
-  cv2.putText(img, text, (x, int(y + text_h + font_scale - 1)),
-              font, font_scale, text_color, font_thickness)
+  if not preview_only:
+    text_color = text_color or (255, 255, 255)
+    cv2.putText(img, text, (x, int(y + text_h + font_scale - 1)),
+                font, font_scale, text_color, font_thickness)
+  return (text_w, text_h)
 
 # Compress a video to the target bitrate.
 # The target bitrate in bits per second will include both video and audio.
@@ -246,7 +254,6 @@ def compress_video(input_filepath, output_filepath, target_total_bitrate_b_s):
   ffmpeg.output(i, output_filepath,
                 **ffmpeg_args
                 ).overwrite_output().run()
-
 
 ############################################
 # DRONE DATA

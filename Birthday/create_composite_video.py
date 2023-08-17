@@ -117,7 +117,8 @@ device_friendlyNames = {
 # output_video_start_time_str = '2023-07-08 11:49:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:00 -0400'
-output_video_start_time_str = '2023-07-08 11:35:00 -0400'
+# output_video_start_time_str = '2023-07-08 11:35:00 -0400'
+# output_video_start_time_str = '2023-07-08 11:37:52 -0400'
 # output_video_start_time_str = '2023-07-08 11:52:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:38 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:46 -0400'
@@ -125,18 +126,21 @@ output_video_start_time_str = '2023-07-08 11:35:00 -0400'
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
 # output_video_start_time_str = '2023-07-08 11:54:55 -0400'
 # output_video_start_time_str = '2023-07-08 11:54:00 -0400'
-# output_video_start_time_str = '2023-07-08 10:20:13.3126 -0400'
-output_video_duration_s = 60*60
+output_video_start_time_str = '2023-07-08 10:20:13 -0400'
+output_video_duration_s = 195780
+# output_video_duration_s = 1#60*60
 output_video_fps = 30
 
 # Define the output video size/resolution and compression.
 composite_layout_column_width = 400 # also defines the scaling/resolution of photos/videos
 subplot_border_size = 5 # ignored if the pyqtgraph subplot method is used
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
-output_video_compressed_rate_MB_s = 0.5 * (output_video_fps/10) # None to not compress the video
+output_video_compressed_rate_MB_s = 0.5 # None to not compress the video
 
 # Define audio track added to the output video.
-add_audio_track_to_output_video = True
+add_audio_track_to_output_video_original = True
+add_audio_track_to_output_video_compressed = True
+delete_output_video_withoutAudio = False
 output_audio_track_volume_gain_factor = 50 # 1 to not change volume
 save_audio_track_as_separate_file = True
 
@@ -168,10 +172,11 @@ conversion_factor_lon_to_m = (40075 * np.cos(np.radians(drone_plot_reference_loc
 drone_lat_to_m = lambda lat: (lat - drone_plot_reference_location_lonLat[1]) * conversion_factor_lat_to_m
 drone_lon_to_m = lambda lon: (lon - drone_plot_reference_location_lonLat[0]) * conversion_factor_lon_to_m
 drone_plot_minRange_m = 400
-drone_plot_rangePad = 20
+drone_plot_rangePad = 40
 drone_plot_tickSpacing_m = {'minor':20, 'major':200}
-drone_plot_colors = [(255, 0, 255), (255, 255, 0)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
-drone_plot_symbolPens = [pyqtgraph.mkPen(np.flip(drone_plot_colors[drone_index]), width=2) for drone_index in range(len(drone_plot_colors))]
+# drone_plot_colors = [(180, 20, 180), (180, 180, 20)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
+drone_plot_colors = [(255, 50, 255), (255, 255, 50)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
+drone_plot_symbolPens = [pyqtgraph.mkPen(np.flip(drone_plot_colors[drone_index]), width=4) for drone_index in range(len(drone_plot_colors))]
 drone_plot_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
 drone_plot_color_lookup = drone_plot_colormap.getLookupTable(start=0, stop=1, nPts=500)
 drone_plot_color_lookup_keys = np.linspace(start=0, stop=125, num=500)
@@ -675,20 +680,64 @@ if use_opencv_subplots:
   # image_label is text to write on an image if desired.
   # audio_graphics_layout and plot_handles are the audio/drone plot items if updating audio/drones.
   def update_subplot(composite_img, layout_specs, data,
-                     image_label=None, image_label_color=None,
+                     subplot_label=None, subplot_label_color=None,
                      plot_handles=None):
     
     if is_image(data[0]):
       data = data[0]
-      # Draw text on the image if desired.
-      # Note that this is done after scaling, since scaling the text could make it unreadable.
-      if image_label is not None:
-        draw_text_on_image(data, image_label, pos=(0,-1),
-                           font_scale=0.7, font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX,
-                           text_color=image_label_color)
       # Update the subplot within the image.
       subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data)
       composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
+      # Draw text on the subplot if desired.
+      # Note that this is done after scaling, since scaling the text could make it unreadable.
+      if subplot_label is not None:
+        subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs)
+        subplot_img = composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]]
+        # Test the width of the text on the image/subplot.
+        pos = (0, -1) # bottom left corner
+        text_width_ratio = None # use the specified font instead of scaling based on width
+        font_thickness = 1#2 if subplot_label_color is not None else 1
+        (text_w, text_h) = draw_text_on_image(subplot_img, subplot_label, pos=pos,
+                           font_scale=0.7, font_thickness=font_thickness,
+                           font=cv2.FONT_HERSHEY_DUPLEX,
+                           text_width_ratio=text_width_ratio,
+                           text_bg_color=None,
+                           text_color=subplot_label_color,
+                           # text_bg_color=subplot_label_color,
+                           # text_color=None if subplot_label_color is None else (0, 0, 0),
+                           preview_only=True)
+        # If the text can fit on the data image, draw it there directly.
+        if text_w <= subplot_img.shape[1] and text_w <= data.shape[1]:
+          draw_text_on_image(data, subplot_label, pos=pos,
+                             font_scale=0.7, font_thickness=font_thickness,
+                             font=cv2.FONT_HERSHEY_DUPLEX,
+                             text_width_ratio=text_width_ratio,
+                             text_bg_color=None,
+                             text_color=subplot_label_color)
+                             # text_bg_color=subplot_label_color,
+                             # text_color=None if subplot_label_color is None else (0, 0, 0))
+          # Update the composite image with the new subplot image.
+          subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data)
+          composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
+        # Otherwise, draw it on the subplot so there is more room.
+        else:
+          # If the text is larger than the subplot, scale it to fit.
+          if text_w > subplot_img.shape[1]:
+            text_width_ratio = 0.9
+          # If the text is larger than the image, center it in the subplot.
+          elif text_w > data.shape[1]:
+            pos = (0.5, -1)
+          # Add the text.
+          draw_text_on_image(subplot_img, subplot_label, pos=pos,
+                             font_scale=0.7, font_thickness=font_thickness,
+                             font=cv2.FONT_HERSHEY_DUPLEX,
+                             text_width_ratio=text_width_ratio,
+                             text_bg_color=None,
+                             text_color=subplot_label_color)
+                             # text_bg_color=subplot_label_color,
+                             # text_color=None if subplot_label_color is None else (0, 0, 0))
+          # Update the composite image with the new subplot image.
+          composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = subplot_img
     
     elif is_audio(data[0]):
       if audio_plot_waveform:
@@ -712,7 +761,7 @@ if use_opencv_subplots:
         img = scale_image(img, target_width=composite_layout_column_width*colspan,
                                target_height=composite_layout_row_height*rowspan)
         # Update the subplot with the image.
-        composite_img = update_subplot(composite_img, layout_specs, [img], image_label=image_label)
+        composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label)
       elif audio_plot_spectrogram:
         (audio_plotWidget, audio_graphics_exporter, h_heatmap, h_colorbar) = plot_handles
         (spectrogram, t_ticks, f_ticks, colorbar_levels) = data
@@ -732,7 +781,7 @@ if use_opencv_subplots:
         img = scale_image(img, target_width=composite_layout_column_width*colspan,
                                target_height=composite_layout_row_height*rowspan)
         # Update the subplot with the image.
-        composite_img = update_subplot(composite_img, layout_specs, [img], image_label=image_label)
+        composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label)
     
     elif is_drone_data(data[0]):
       # Set the lines to the new data points.
@@ -741,7 +790,6 @@ if use_opencv_subplots:
       for (drone_index, drone_data) in enumerate(data):
         x = drone_lon_to_m(drone_data['longitude'])
         y = drone_lat_to_m(drone_data['latitude'])
-        drone_coordinates.append([x, y])
         drone_plot_color_index = drone_plot_color_lookup_keys.searchsorted(drone_data['altitude_relative_m'])
         drone_plot_color_index = min(drone_plot_color_index, drone_plot_color_lookup.shape[0]-1)
         drone_line_handles[drone_index].setData(
@@ -750,30 +798,35 @@ if use_opencv_subplots:
             symbolBrush=pyqtgraph.mkColor(*drone_plot_color_lookup[drone_plot_color_index], 255),
             symbolPen=drone_plot_symbolPens[drone_index],
         )
-      drone_coordinates = np.array(drone_coordinates)
+        if ('is_dummy_data' not in drone_data) or (not drone_data['is_dummy_data']):
+          drone_coordinates.append([x, y])
       # Update the plot range.
-      max_distance_m = np.amax(spatial.distance.cdist(drone_coordinates, drone_coordinates))
-      plot_range = max(drone_plot_minRange_m, 2*max_distance_m)
-      x_extremes = [np.amin(drone_coordinates[:,0]), np.amax(drone_coordinates[:,0])]
-      y_extremes = [np.amin(drone_coordinates[:,1]), np.amax(drone_coordinates[:,1])]
-      x_limits = drone_plotWidget.getAxis('bottom').range
-      y_limits = drone_plotWidget.getAxis('left').range
-      if x_extremes[0] < x_limits[0] + drone_plot_rangePad:
-        x_limits[0] = (x_extremes[0] - drone_plot_rangePad)
-        x_limits[1] = x_limits[0] + plot_range
-      if x_extremes[1] > x_limits[1] - drone_plot_rangePad:
-        x_limits[1] = (x_extremes[1] + drone_plot_rangePad)
-        x_limits[0] = x_limits[1] - plot_range
-      if y_extremes[0] < y_limits[0] + drone_plot_rangePad:
-        y_limits[0] = (y_extremes[0] - drone_plot_rangePad)
-        y_limits[1] = y_limits[0] + plot_range
-      if y_extremes[1] > y_limits[1] - drone_plot_rangePad:
-        y_limits[1] = (y_extremes[1] + drone_plot_rangePad)
-        y_limits[0] = y_limits[1] - plot_range
-      drone_plotWidget.setAspectLocked(False)
-      drone_plotWidget.setXRange(*x_limits, padding=0)
-      drone_plotWidget.setYRange(*y_limits, padding=0)
-      drone_plotWidget.setAspectLocked(True)
+      if len(drone_coordinates) > 0:
+        drone_coordinates = np.array(drone_coordinates)
+        max_distance_m = np.amax(spatial.distance.cdist(drone_coordinates, drone_coordinates))
+        plot_range = max(drone_plot_minRange_m, 2*max_distance_m)
+        x_extremes = [np.amin(drone_coordinates[:,0]), np.amax(drone_coordinates[:,0])]
+        y_extremes = [np.amin(drone_coordinates[:,1]), np.amax(drone_coordinates[:,1])]
+        x_center = np.mean(drone_plotWidget.getAxis('bottom').range)
+        y_center = np.mean(drone_plotWidget.getAxis('left').range)
+        x_limits = x_center + np.array([-plot_range/2, plot_range/2])
+        y_limits = y_center + np.array([-plot_range/2, plot_range/2])
+        if x_extremes[0] < x_limits[0] + drone_plot_rangePad:
+          x_limits[0] = (x_extremes[0] - drone_plot_rangePad)
+          x_limits[1] = x_limits[0] + plot_range
+        if x_extremes[1] > x_limits[1] - drone_plot_rangePad:
+          x_limits[1] = (x_extremes[1] + drone_plot_rangePad)
+          x_limits[0] = x_limits[1] - plot_range
+        if y_extremes[0] < y_limits[0] + drone_plot_rangePad:
+          y_limits[0] = (y_extremes[0] - drone_plot_rangePad)
+          y_limits[1] = y_limits[0] + plot_range
+        if y_extremes[1] > y_limits[1] - drone_plot_rangePad:
+          y_limits[1] = (y_extremes[1] + drone_plot_rangePad)
+          y_limits[0] = y_limits[1] - plot_range
+        drone_plotWidget.setAspectLocked(False)
+        drone_plotWidget.setXRange(*x_limits, padding=0)
+        drone_plotWidget.setYRange(*y_limits, padding=0)
+        drone_plotWidget.setAspectLocked(True)
       # Grab the plot as an image.
       img = drone_graphics_layout.grab().toImage()
       img = qimage_to_numpy(img)
@@ -782,7 +835,7 @@ if use_opencv_subplots:
       img = scale_image(img, target_width=composite_layout_column_width*colspan,
                              target_height=composite_layout_row_height*rowspan)
       # Update the subplot with the image.
-      composite_img = update_subplot(composite_img, layout_specs, [img], image_label=image_label)
+      composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label)
     return composite_img
   
   # Create the blank image to use as the background.
@@ -827,8 +880,8 @@ if use_opencv_subplots:
       blank_image = 100*np.ones_like(example_image)
       # Update the dummy composite image with the dummy image.
       update_subplot(composite_img_dummy, layout_specs, [example_image],
-                     image_label=device_friendlyName,
-                     image_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
+                     subplot_label=device_friendlyName,
+                     subplot_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
       # Store a black image as dummy data.
       # Make it the full size of the subplot, rather than the size of the example image,
       #  since other data for this subplot may be a different size than this first example
@@ -866,7 +919,7 @@ if use_opencv_subplots:
         audio_plot_handles[str(layout_specs)] = (audio_plotWidget, graphics_layout, h_lines)
         # Update the example composite image.
         update_subplot(composite_img_dummy, layout_specs, [random_audio],
-                       image_label=None,
+                       subplot_label=None,
                        plot_handles=audio_plot_handles[str(layout_specs)])
         # Store dummy data.
         dummy_datas[str(layout_specs)] = [0*random_audio]
@@ -901,7 +954,7 @@ if use_opencv_subplots:
         audio_plot_handles[str(layout_specs)] = (audio_plotWidget, audio_graphics_exporter, h_heatmap, h_colorbar)
         # Update the plot now, to set formatting such as tick labels.
         update_subplot(composite_img_dummy, layout_specs, (spectrogram, t_ticks, f_ticks, colorbar_levels),
-                       image_label=None,
+                       subplot_label=None,
                        plot_handles=audio_plot_handles[str(layout_specs)])
         # Store dummy data.
         dummy_datas[str(layout_specs)] = (0*spectrogram, t_ticks, f_ticks, colorbar_levels)
@@ -932,10 +985,7 @@ if use_opencv_subplots:
                                 # alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
     drone_graphics_layout.setGeometry(10, 10, composite_layout_column_width*colspan,
                                       composite_layout_row_height*rowspan)
-    # Ensure the widget fills the width of the entire allocated region of subplots.
-    # drone_grid_layout.setRowMinimumHeight(row, composite_layout_row_height*rowspan)
-    # drone_plotWidget.setMinimumWidth(composite_layout_column_width*colspan)
-    # Set the bounds and the aspect ratio.
+    # Set the plot bounds.
     (x_center, y_center) = drone_plot_reference_location_lonLat
     x_center = drone_lon_to_m(x_center)
     y_center = drone_lat_to_m(y_center)
@@ -943,16 +993,27 @@ if use_opencv_subplots:
     y_limits = y_center + np.array([-drone_plot_minRange_m/2, drone_plot_minRange_m/2])
     drone_plotWidget.setXRange(*x_limits, padding=0)
     drone_plotWidget.setYRange(*y_limits, padding=0)
+    # Set the tick spacing and axis labels.
     drone_plotWidget.getAxis('left').setTickSpacing(**drone_plot_tickSpacing_m)
     drone_plotWidget.getAxis('bottom').setTickSpacing(**drone_plot_tickSpacing_m)
     drone_plotWidget.getAxis('left').setLabel('Y From Home [m]')
     drone_plotWidget.getAxis('bottom').setLabel('X From Home [m]')
+    # Set the aspect ratio to be square and show the grid.
     drone_plotWidget.setAspectLocked(True)
     drone_plotWidget.showGrid(x=True, y=True, alpha=0.8)
-    drone_plotWidget.getAxis('bottom').setPen(width=10)
-    drone_plotWidget.getAxis('left').setPen(width=10)
-    drone_plotWidget.getAxis('bottom').setZValue(-1000) # put the grid behind the plotted data
-    drone_plotWidget.getAxis('left').setZValue(-1000) # put the grid behind the plotted data
+    # Add a box around the plot.
+    drone_plotWidget.showAxis('right')
+    drone_plotWidget.showAxis('top')
+    drone_plotWidget.getAxis('right').setTicks([])
+    drone_plotWidget.getAxis('top').setTicks([])
+    # Adjust the width of the grid and box.
+    drone_plotWidget.getAxis('bottom').setPen(width=6)
+    drone_plotWidget.getAxis('left').setPen(width=6)
+    drone_plotWidget.getAxis('top').setPen(width=6)
+    drone_plotWidget.getAxis('right').setPen(width=6)
+    # Put the grid behind the plotted data.
+    drone_plotWidget.getAxis('bottom').setZValue(-1000)
+    drone_plotWidget.getAxis('left').setZValue(-1000) 
     # Generate dummy data for each drone.
     def get_example_drone_data():
       return {
@@ -980,7 +1041,7 @@ if use_opencv_subplots:
     drone_plot_handles = (drone_plotWidget, drone_graphics_layout, h_lines)
     # Update the example composite image.
     update_subplot(composite_img_dummy, drone_data_layout_specs, drone_dummy_data,
-                   image_label=None,
+                   subplot_label=None,
                    plot_handles=drone_plot_handles)
     # Store the dummy data.
     # Add a marker to indicate that it is dummy data.
@@ -1083,8 +1144,8 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
             elif use_opencv_subplots:
               img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
               update_subplot(composite_img_current, layout_specs, [img],
-                             image_label=device_friendlyName,
-                             image_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
+                             subplot_label=device_friendlyName,
+                             subplot_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
             layouts_updated[str(layout_specs)] = True
             layouts_showing_dummyData[str(layout_specs)] = False
             layouts_prevState[str(layout_specs)] = (filepath, data_index)
@@ -1116,8 +1177,8 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           elif use_opencv_subplots:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             update_subplot(composite_img_current, layout_specs, [img],
-                           image_label=device_friendlyName,
-                           image_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
+                           subplot_label=device_friendlyName,
+                           subplot_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
           layouts_updated[str(layout_specs)] = True
           layouts_showing_dummyData[str(layout_specs)] = False
           layouts_prevState[str(layout_specs)] = (filepath, data_index)
@@ -1169,7 +1230,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
             update_subplot(layout_widgets[str(layout_specs)], layout_specs, data_toPlot)
           elif use_opencv_subplots:
             update_subplot(composite_img_current, layout_specs, data_toPlot,
-                           image_label=None,
+                           subplot_label=None,
                            plot_handles=audio_plot_handles[str(layout_specs)])
           layouts_updated[str(layout_specs)] = True
           layouts_showing_dummyData[str(layout_specs)] = False
@@ -1194,14 +1255,13 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
             }
             break # don't check any more media for this device
       # Only spend time updating the plot if it changed since last frame.
-      
       if drone_data_toPlot == layouts_prevState[str(layout_specs)]:
         layouts_updated[str(layout_specs)] = True
         layouts_showing_dummyData[str(layout_specs)] = False
       else:
         t0 = time.time()
         update_subplot(composite_img_current, layout_specs, drone_data_toPlot,
-                       image_label=None,
+                       subplot_label=None,
                        plot_handles=drone_plot_handles)
         layouts_updated[str(layout_specs)] = True
         layouts_showing_dummyData[str(layout_specs)] = False
@@ -1219,12 +1279,13 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
       elif use_opencv_subplots:
         if is_audio(dummy_datas[str(layout_specs)][0]):
           update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
-                         image_label=None,
+                         subplot_label=None,
                          plot_handles=audio_plot_handles[str(layout_specs)])
           duration_s_updatePlots_audio += time.time() - t0
         else:
           update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
-                         image_label=None)
+                         subplot_label=None)
+          duration_s_updatePlots_total += time.time() - t0
       layouts_showing_dummyData[str(layout_specs)] = True
       duration_s_updatePlots_total += time.time() - t0
       layouts_prevState[str(layout_specs)] = None
@@ -1303,6 +1364,7 @@ print()
 # COMPRESS THE VIDEO
 ######################################################
 
+output_video_compressed_filepath = None
 if output_video_compressed_rate_MB_s is not None:
   print('Compressing the output video to %0.2f MB (target rate %g MB/s)'
         % (output_video_compressed_rate_MB_s*output_video_duration_s, output_video_compressed_rate_MB_s))
@@ -1313,20 +1375,30 @@ if output_video_compressed_rate_MB_s is not None:
                                         os.path.splitext(output_video_filepath)[1])
   compress_video(output_video_filepath, output_video_compressed_filepath,
                  output_video_compressed_rate_MB_s*1024*1024*8)
-  print('Compression completed in %0.3f seconds' % (time.time() - t0))
+  print('  Compression completed in %0.3f seconds' % (time.time() - t0))
   print()
-  output_video_filepath = output_video_compressed_filepath
 
 ######################################################
 # ADD AUDIO TO THE VIDEO
 ######################################################
 
-if add_audio_track_to_output_video:
+output_video_filepaths_toAddAudio = []
+if add_audio_track_to_output_video_original:
+  output_video_filepaths_toAddAudio.append(output_video_filepath)
+if add_audio_track_to_output_video_compressed:
+  output_video_filepaths_toAddAudio.append(output_video_compressed_filepath)
+saved_audio_file = False
+
+for output_video_filepath_toAddAudio in output_video_filepaths_toAddAudio:
+  if output_video_filepath_toAddAudio is None:
+    continue
+  print('Adding aligned audio track to %s' % os.path.basename(output_video_filepath_toAddAudio))
+  
   # Open a handle to the newly created composite video.
-  output_video_clip = VideoFileClip(output_video_filepath, audio=False)
+  output_video_clip = VideoFileClip(output_video_filepath_toAddAudio, audio=False)
   
   # Find audio files that overlap with the video.
-  print('Searching for audio files that overlap with the composite video')
+  print('  Searching for audio files that overlap with the composite video')
   audio_clips = []
   for (device_id, media_file_infos) in media_infos.items():
     for filepath in media_file_infos.keys():
@@ -1369,22 +1441,35 @@ if add_audio_track_to_output_video:
   # Create the composite audio.
   if len(audio_clips) == 0:
     print('  No audio clips were found that overlap with the generated video')
+    # Close handle to the video clip.
+    output_video_clip.close()
   else:
     print('  Adding %d audio clips to the video' % (len(audio_clips)))
     t0 = time.time()
     composite_audio_clip = CompositeAudioClip(audio_clips)
     composite_audio_clip = composite_audio_clip.volumex(output_audio_track_volume_gain_factor)
     output_video_clip = output_video_clip.set_audio(composite_audio_clip)
-    output_video_withAudio_filepath = '%s_withAudio%s' % os.path.splitext(output_video_filepath)
+    output_video_withAudio_filepath = '%s_withAudio%s' % os.path.splitext(output_video_filepath_toAddAudio)
+    output_audio_filepath = '%s_audio.m4a' % os.path.splitext(output_video_filepath_toAddAudio)[0]
     output_video_clip.write_videofile(output_video_withAudio_filepath,
                                       verbose=False,
                                       logger=proglog.TqdmProgressBarLogger(print_messages=False),
                                       # codec='libx264',
                                       audio_codec='aac',
-                                      temp_audiofile='%s.m4a' % os.path.splitext(output_video_filepath)[0],
-                                      remove_temp=(not save_audio_track_as_separate_file),
+                                      temp_audiofile=output_audio_filepath,
+                                      remove_temp=(not save_audio_track_as_separate_file) or saved_audio_file,
                                       )
-    print('Audio track added in %0.3f seconds' % (time.time() - t0))
+    saved_audio_file = save_audio_track_as_separate_file
+    print('  Audio track added in %0.3f seconds' % (time.time() - t0))
+    # Close handles to the audio files.
+    for audio_clip in audio_clips:
+      audio_clip.close()
+    # Close handle to the video clip.
+    output_video_clip.close()
+    # Delete the original version without audio.
+    if delete_output_video_withoutAudio:
+      print('  Deleting the original version without audio')
+      os.remove(output_video_filepath_toAddAudio)
     print()
 
 ######################################################
