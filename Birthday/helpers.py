@@ -165,7 +165,8 @@ def scale_image(img, target_width, target_height):
 def draw_text_on_image(img, text, pos=(0, 0),
                        font_scale=8, text_width_ratio=None,
                        font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX,
-                       text_color=None, text_bg_color=None, preview_only=False,
+                       text_color=None, text_bg_color=None, text_bg_outline_color=None,
+                       preview_only=False,
                        ):
   # If desired, compute a font scale based on the target width ratio.
   if text_width_ratio is not None:
@@ -178,27 +179,41 @@ def draw_text_on_image(img, text, pos=(0, 0),
     font_scale -= 0.2
   # Compute the text dimensions.
   (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+  # Compute padding.
+  text_bg_pad = round(text_w*0.03)
+  text_bg_outline_width = round(text_w*0.02) if text_bg_outline_color is not None else 0
   # Place the text at the bottom and/or left if desired, and handle fractional placement if desired.
   pos = list(pos)
   x, y = pos
   if y == -1:
-    y = img.shape[0]-round(1.25*text_h)
+    y = round(img.shape[0] - text_h - text_bg_pad*2 - text_bg_outline_width*2)
   elif y > 0 and y < 1:
-    y = round(img.shape[0]*y + text_h/2)
+    y = round(img.shape[0]*y - text_h/2 - text_bg_pad - text_bg_outline_width)
   if x == -1:
-    x = img.shape[1]-text_w
+    x = round(img.shape[1] - text_w - text_bg_pad*2 - text_bg_outline_width*2)
   elif x > 0 and x < 1:
-    x = round((img.shape[1] - text_w)*x)
-  pos = [x, y]
-  # Draw the background shading.
+    x = round(img.shape[1]*x - text_w/2 - text_bg_pad - text_bg_outline_width)
   if not preview_only:
+    # Draw a border around the background if desired.
+    if text_bg_outline_color is not None:
+      cv2.rectangle(img, (x,y), (x + text_w + 2*text_bg_outline_width + 2*text_bg_pad,
+                                 y + text_h + 2*text_bg_outline_width + 2*text_bg_pad),
+                    text_bg_outline_color, -1)
+      x += text_bg_outline_width
+      y += text_bg_outline_width
+    
+    # Draw the background shading.
     text_bg_color = text_bg_color or (100, 100, 100)
-    cv2.rectangle(img, pos, (x + text_w, y + text_h), text_bg_color, -1)
-  # Draw the text.
-  if not preview_only:
+    cv2.rectangle(img, (x,y), (x + text_w + 2*text_bg_pad, y + text_h + 2*text_bg_pad),
+                  text_bg_color, -1)
+    x += text_bg_pad
+    y += text_bg_pad
+    
+    # Draw the text.
     text_color = text_color or (255, 255, 255)
     cv2.putText(img, text, (x, int(y + text_h + font_scale - 1)),
                 font, font_scale, text_color, font_thickness)
+  
   return (text_w, text_h)
 
 # Compress a video to the target bitrate.

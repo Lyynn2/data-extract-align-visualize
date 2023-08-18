@@ -44,7 +44,7 @@ composite_layout = OrderedDict([
   ('Drone Positions'      , (2, 3, 1, 1)),
   ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
   ('Phone (Pagani)'       , (3, 1, 1, 1)),
-  ('Phone (SalinoHugg)'   , (3, 2, 1, 1)),
+  ('Phone (Salino-Hugg)'   , (3, 2, 1, 1)),
   ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
   # ('Hydrophone (Mevorach)', (0, 0, 1, 1)),
@@ -88,7 +88,7 @@ device_friendlyNames = {
   'Misc/Aluma'                 : 'Phone (Aluma)',
   'Misc/Baumgartner'           : 'Phone (Baumgartner)',
   'Misc/Pagani'                : 'Phone (Pagani)',
-  'Misc/SalinoHugg'            : 'Phone (SalinoHugg)',
+  'Misc/SalinoHugg'            : 'Phone (Salino-Hugg)',
   'Misc/DelPreto_Pixel5'       : 'Phone (DelPreto)',
   'Misc/DelPreto_GoPro'        : 'GoPro (DelPreto)',
   'Drone_Positions'            : 'Drone Positions',
@@ -126,14 +126,15 @@ device_friendlyNames = {
 # output_video_start_time_str = '2023-07-08 11:53:53 -0400'
 # output_video_start_time_str = '2023-07-08 11:54:55 -0400'
 # output_video_start_time_str = '2023-07-08 11:54:00 -0400'
+# output_video_start_time_str = '2023-07-08 14:05:00 -0400'
 output_video_start_time_str = '2023-07-08 10:20:13 -0400'
-output_video_duration_s = 195780
-# output_video_duration_s = 1#60*60
+output_video_duration_s = 19579
+# output_video_duration_s = 1
 output_video_fps = 30
 
 # Define the output video size/resolution and compression.
-composite_layout_column_width = 400 # also defines the scaling/resolution of photos/videos
-subplot_border_size = 5 # ignored if the pyqtgraph subplot method is used
+composite_layout_column_width = 600 # also defines the scaling/resolution of photos/videos
+subplot_border_size = 8 # ignored if the pyqtgraph subplot method is used
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
 output_video_compressed_rate_MB_s = 0.5 # None to not compress the video
 
@@ -164,6 +165,7 @@ audio_spectrogram_window_s = 0.03
 audio_spectrogram_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
 # audio_spectrogram_colormap = pyqtgraph.colormap.get('nipy_spectral', source='matplotlib', skipCache=True)
 # audio_spectrogram_colormap = pyqtgraph.colormap.get('turbo', source='matplotlib', skipCache=True)
+audio_plot_font_size = 20
 
 # Configure drone plotting.
 drone_plot_reference_location_lonLat = [-61.373179, 15.306914]
@@ -171,17 +173,18 @@ conversion_factor_lat_to_m = (111.32)*1000
 conversion_factor_lon_to_m = (40075 * np.cos(np.radians(drone_plot_reference_location_lonLat[1])) / 360) * 1000
 drone_lat_to_m = lambda lat: (lat - drone_plot_reference_location_lonLat[1]) * conversion_factor_lat_to_m
 drone_lon_to_m = lambda lon: (lon - drone_plot_reference_location_lonLat[0]) * conversion_factor_lon_to_m
-drone_plot_minRange_m = 400
-drone_plot_rangePad = 40
-drone_plot_tickSpacing_m = {'minor':20, 'major':200}
+drone_plot_minRange_m = 250
+drone_plot_rangePad = 50
+drone_plot_tickSpacing_m = {'minor':25, 'major':100}
 # drone_plot_colors = [(180, 20, 180), (180, 180, 20)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
-drone_plot_colors = [(255, 50, 255), (255, 255, 50)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
-drone_plot_symbolPens = [pyqtgraph.mkPen(np.flip(drone_plot_colors[drone_index]), width=4) for drone_index in range(len(drone_plot_colors))]
+drone_plot_colors = [(210, 0, 210), (190, 190, 0)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
+drone_plot_symbolPens = [pyqtgraph.mkPen(np.flip(drone_plot_colors[drone_index]), width=5) for drone_index in range(len(drone_plot_colors))]
 drone_plot_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
-drone_plot_color_lookup = drone_plot_colormap.getLookupTable(start=0, stop=1, nPts=500)
-drone_plot_color_lookup_keys = np.linspace(start=0, stop=125, num=500)
+drone_plot_color_lookup = drone_plot_colormap.getLookupTable(start=0, stop=1, nPts=1000)
+drone_plot_color_lookup_keys = np.linspace(start=0, stop=150, num=1000)
 drone_colorbar_tickSpacing_m = {'major':25, 'minor':25}
-drone_plot_symbolSize = 15
+drone_plot_symbolSize = 25
+drone_plot_font_size = 16
 
 # Configure how device timestamps are matched with output video frame timestamps.
 timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
@@ -288,8 +291,8 @@ def add_timestamp_banner(img, timestamp_s):
                                   timestamp_s)
   
   # Compute the size of the text that will be drawn on the image.
-  fontFace = cv2.FONT_HERSHEY_DUPLEX # cv2.FONT_HERSHEY_SIMPLEX
-  fontThickness = 1 #2 if output_video_banner_height > 25 else 1
+  fontFace = cv2.FONT_HERSHEY_SIMPLEX # cv2.FONT_HERSHEY_SIMPLEX
+  fontThickness = 2 if output_video_banner_height > 25 else 1
   if output_video_banner_fontScale is None:
     # If this is the first time, compute a font size to use.
     target_height = 0.5*output_video_banner_height
@@ -442,7 +445,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
         spectrogram_f = spectrogram_f[min_f_index:max_f_index]
         spectrogram = spectrogram[min_f_index:max_f_index, :]
         # Determine colorbar levels.
-        colorbar_levels = [0, 0.4] #[0, np.quantile(spectrogram, 0.99)]
+        colorbar_levels = [0, 0.42] #[0, np.quantile(spectrogram, 0.99)] # was set to 0.4, but made it 0.42 to move the tick label down a bit since it was cut off at the top
         # Determine epoch timestamps of each entry in the spectrogram.
         timestamps_s = spectrogram_t + timestamps_s[0]
         # Determine frequency tick labels.
@@ -697,23 +700,30 @@ if use_opencv_subplots:
         pos = (0, -1) # bottom left corner
         text_width_ratio = None # use the specified font instead of scaling based on width
         font_thickness = 1#2 if subplot_label_color is not None else 1
+        font_scale = 0.9
         (text_w, text_h) = draw_text_on_image(subplot_img, subplot_label, pos=pos,
-                           font_scale=0.7, font_thickness=font_thickness,
-                           font=cv2.FONT_HERSHEY_DUPLEX,
+                           font_scale=font_scale, font_thickness=font_thickness,
+                           font=cv2.FONT_HERSHEY_SIMPLEX,
                            text_width_ratio=text_width_ratio,
                            text_bg_color=None,
-                           text_color=subplot_label_color,
+                           text_bg_outline_color=subplot_label_color,
+                           text_color=None,
+                           # text_bg_color=None,
+                           # text_color=subplot_label_color,
                            # text_bg_color=subplot_label_color,
                            # text_color=None if subplot_label_color is None else (0, 0, 0),
                            preview_only=True)
         # If the text can fit on the data image, draw it there directly.
         if text_w <= subplot_img.shape[1] and text_w <= data.shape[1]:
           draw_text_on_image(data, subplot_label, pos=pos,
-                             font_scale=0.7, font_thickness=font_thickness,
-                             font=cv2.FONT_HERSHEY_DUPLEX,
+                             font_scale=font_scale, font_thickness=font_thickness,
+                             font=cv2.FONT_HERSHEY_SIMPLEX,
                              text_width_ratio=text_width_ratio,
                              text_bg_color=None,
-                             text_color=subplot_label_color)
+                             text_bg_outline_color=subplot_label_color,
+                             text_color=None)
+                             # text_bg_color=None,
+                             # text_color=subplot_label_color)
                              # text_bg_color=subplot_label_color,
                              # text_color=None if subplot_label_color is None else (0, 0, 0))
           # Update the composite image with the new subplot image.
@@ -729,11 +739,14 @@ if use_opencv_subplots:
             pos = (0.5, -1)
           # Add the text.
           draw_text_on_image(subplot_img, subplot_label, pos=pos,
-                             font_scale=0.7, font_thickness=font_thickness,
-                             font=cv2.FONT_HERSHEY_DUPLEX,
+                             font_scale=font_scale, font_thickness=font_thickness,
+                             font=cv2.FONT_HERSHEY_SIMPLEX,
                              text_width_ratio=text_width_ratio,
                              text_bg_color=None,
-                             text_color=subplot_label_color)
+                             text_bg_outline_color=subplot_label_color,
+                             text_color=None)
+                             # text_bg_color=None,
+                             # text_color=subplot_label_color)
                              # text_bg_color=subplot_label_color,
                              # text_color=None if subplot_label_color is None else (0, 0, 0))
           # Update the composite image with the new subplot image.
@@ -942,11 +955,25 @@ if use_opencv_subplots:
         audio_plotWidget.getAxis('bottom').setTicks([t_ticks])
         audio_plotWidget.getAxis('bottom').setLabel('Time [s]')
         audio_plotWidget.getAxis('left').setLabel('Frequency [kHz]')
+        audio_plot_font = QtGui.QFont()
+        audio_plot_font.setPointSize(audio_plot_font_size)
+        audio_plotWidget.getAxis('bottom').label.setFont(audio_plot_font)
+        audio_plotWidget.getAxis('bottom').setTickFont(audio_plot_font)
+        #audio_plotWidget.getAxis('bottom').setStyle(tickTextOffset=audio_plot_font_size)
+        audio_plotWidget.getAxis('left').label.setFont(audio_plot_font)
+        audio_plotWidget.getAxis('left').setTickFont(audio_plot_font)
+        # Adjust the width of the axis to accommodate the tick labels and the axis label in the new font.
+        audio_plot_font_metrics = QtGui.QFontMetricsF(audio_plot_font)
+        audio_tickLabels_numChars = max([len(x) for (_, x) in f_ticks])
+        audio_tickLabels_width = audio_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, '7'*audio_tickLabels_numChars).width()
+        audio_label_height = audio_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, audio_plotWidget.getAxis('left').label.toPlainText()).height()
+        audio_plotWidget.getAxis('left').setWidth(1.15*(audio_tickLabels_width + audio_label_height))
         # Force an update of the window size (double-check if this is needed?)
         graphics_layout.show()
         graphics_layout.hide()
         # h_plot.setAspectLocked(True)
         h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap=audio_spectrogram_colormap, interactive=False)
+        h_colorbar.axis.setTickFont(audio_plot_font)
         # Create an exporter to get the plot as an image.
         audio_graphics_exporter = pyqtgraph.exporters.ImageExporter(audio_plotWidget.plotItem)
         audio_graphics_exporter.parameters()['width'] = composite_layout_column_width*colspan
@@ -998,6 +1025,12 @@ if use_opencv_subplots:
     drone_plotWidget.getAxis('bottom').setTickSpacing(**drone_plot_tickSpacing_m)
     drone_plotWidget.getAxis('left').setLabel('Y From Home [m]')
     drone_plotWidget.getAxis('bottom').setLabel('X From Home [m]')
+    drone_plot_font = QtGui.QFont()
+    drone_plot_font.setPointSize(drone_plot_font_size)
+    drone_plotWidget.getAxis('bottom').label.setFont(drone_plot_font)
+    drone_plotWidget.getAxis('bottom').setTickFont(drone_plot_font)
+    drone_plotWidget.getAxis('left').label.setFont(drone_plot_font)
+    drone_plotWidget.getAxis('left').setTickFont(drone_plot_font)
     # Set the aspect ratio to be square and show the grid.
     drone_plotWidget.setAspectLocked(True)
     drone_plotWidget.showGrid(x=True, y=True, alpha=0.8)
@@ -1013,7 +1046,7 @@ if use_opencv_subplots:
     drone_plotWidget.getAxis('right').setPen(width=6)
     # Put the grid behind the plotted data.
     drone_plotWidget.getAxis('bottom').setZValue(-1000)
-    drone_plotWidget.getAxis('left').setZValue(-1000) 
+    drone_plotWidget.getAxis('left').setZValue(-1000)
     # Generate dummy data for each drone.
     def get_example_drone_data():
       return {
@@ -1036,6 +1069,14 @@ if use_opencv_subplots:
                                                      interactive=False)
     drone_altitude_colorbar.axis.setTickSpacing(**drone_colorbar_tickSpacing_m)
     drone_altitude_colorbar.axis.setLabel('Altitude [m]')
+    drone_altitude_colorbar.axis.label.setFont(drone_plot_font)
+    drone_altitude_colorbar.axis.setTickFont(drone_plot_font)
+    # Adjust the width of the colorbar axis to accommodate the tick labels and the axis label in the new font.
+    drone_plot_font_metrics = QtGui.QFontMetricsF(drone_plot_font)
+    drone_altitude_tickLabels_numChars = max([len('%d' % x) for x in drone_altitude_colorbar.values])
+    drone_altitude_tickLabels_width = drone_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, '7'*drone_altitude_tickLabels_numChars).width()
+    drone_altitude_label_height = drone_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, drone_altitude_colorbar.axis.label.toPlainText()).height()
+    drone_altitude_colorbar.axis.setWidth(1.05*(drone_altitude_tickLabels_width + drone_altitude_label_height))
     drone_graphics_layout.addItem(drone_altitude_colorbar, *(0, 1, 1, 1))
     # Store the line handles.
     drone_plot_handles = (drone_plotWidget, drone_graphics_layout, h_lines)
