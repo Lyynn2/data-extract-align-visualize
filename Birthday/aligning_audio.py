@@ -63,18 +63,18 @@ yranges = [{
 
 # Specify offsets to add to timestamps extracted from filenames.
 epoch_offsets_toAdd_s = {
-  'CETI-DJI_MAVIC3-1'          : 0.972,
-  'DSWP-DJI_MAVIC3-2'          : 2.145,
-  'DG-CANON_EOS_1DX_MARK_III-1': 4*3600 + 203.81,
-  'JD-CANON_REBEL_T5I'         : 14.689,
-  'DSWP-CANON_EOS_70D-1'       : 4*3600 + 87.189,
+  'CETI-DJI_MAVIC3-1'          : 0.79859,
+  'DSWP-DJI_MAVIC3-2'          : 2.10833,
+  'DG-CANON_EOS_1DX_MARK_III-1': 14603.81506,
+  'JD-CANON_REBEL_T5I'         : 14.37973,
+  'DSWP-CANON_EOS_70D-1'       : 14486.21306,
   'DSWP-KASHMIR_MIXPRE6-1'     : 32.7085, #32.701, #32.7160
-  'Misc/Aluma'                 : -0.5595,
+  'Misc/Aluma'                 : -0.55946,
   'Misc/Baumgartner'           : 3.303, #2.940, #3.28,
   'Misc/Pagani'                : 0, # used as reference time
-  'Misc/SalinoHugg'            : -0.117,
-  'Misc/DelPreto_Pixel5'       : 0,
-  'Misc/DelPreto_GoPro'        : 0,
+  'Misc/SalinoHugg'            : -0.13826,
+  'Misc/DelPreto_Pixel5'       : 26.39846,
+  'Misc/DelPreto_GoPro'        : 8.52572,
 }
 
 # Specify the time zone offset to get local time of this data collection day from UTC.
