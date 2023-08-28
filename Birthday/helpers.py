@@ -4,10 +4,14 @@ import decord
 from PIL import Image
 import ffmpeg
 import pysrt
+import csv
+from operator import itemgetter
 
 import dateutil.parser
 from datetime import datetime
+import re
 import os
+import glob
 import numpy as np
 
 import pyqtgraph
@@ -65,6 +69,13 @@ def is_drone_data(filepath_or_data):
   if isinstance(filepath_or_data, dict) and 'altitude_relative_m' in filepath_or_data:
     return True
   return get_file_extension(filepath_or_data) in ['.srt'] or False
+
+def is_coda_annotations(filepath_or_data):
+  if filepath_or_data is None:
+    return False
+  if isinstance(filepath_or_data, dict) and 'coda_start_times_s' in filepath_or_data:
+    return True
+  return get_file_extension(filepath_or_data) in ['.csv'] or False
   
 ############################################
 # IMAGES / VIDEOS
@@ -251,7 +262,8 @@ def compress_video(input_filepath, output_filepath, target_total_bitrate_b_s):
     'b:v': video_bitrate,
     'pass': 1,
     'f': 'mp4',
-    'loglevel':'quiet',
+    'loglevel':'error',
+    'log': False,
   }
   ffmpeg.output(i, os.devnull,
                 **ffmpeg_args
@@ -262,7 +274,8 @@ def compress_video(input_filepath, output_filepath, target_total_bitrate_b_s):
     'b:v': video_bitrate,
     'pass': 2,
     'c:a': 'aac',
-    'loglevel': 'quiet',
+    'loglevel': 'error',
+    'log': False,
   }
   if len(audio_streams) > 0:
     ffmpeg_args['b:a'] = audio_bitrate
@@ -315,9 +328,65 @@ def get_drone_data(video_filepath, timezone_offset_str=''):
     drone_data['altitude_absolute_m'][frame_index] = float(data_line.split('abs_alt:')[1].split(']')[0].strip())
   
   return drone_data
-  
-  
-  
+
+############################################
+# CODA ANNOTATIONS
+############################################
+
+def get_coda_annotations(annotation_filepath, data_root_dir, epoch_offsets_toAdd_s):
+  # Read the CSV data.
+  annotations_file = open(annotation_filepath, 'r')
+  csv_reader = csv.reader(annotations_file)
+  csv_rows = list(csv_reader)
+  annotations_file.close()
+  # Get the header indexes for particular columns of data.
+  headers = csv_rows[0]
+  audio_file_keyword_columnIndex = [i for (i, h) in enumerate(headers) if 'recording' in h.lower()][0]
+  whale_columnIndex = [i for (i, h) in enumerate(headers) if 'whale' in h.lower()][0]
+  tfs_columnIndex = [i for (i, h) in enumerate(headers) if 'tfs' in h.lower()][0]
+  ici_columnIndexes = [i for (i, h) in enumerate(headers) if 'ici' in h.lower()]
+  # Create a list of data for each desired field.
+  coda_start_times_s = []
+  click_icis_s = []
+  click_times_s = []
+  whale_indexes = []
+  audio_file_start_times_s = {}
+  for coda_row in csv_rows[1:]:
+    # Get the start time of the file in this row.
+    audio_file_keyword = coda_row[audio_file_keyword_columnIndex]
+    if audio_file_keyword not in audio_file_start_times_s:
+      # Find the wav file that the CSV references.
+      filepaths = glob.glob(os.path.join(data_root_dir, '*/%s*.wav' % audio_file_keyword), recursive=True)
+      if len(filepaths) == 0:
+        raise AssertionError('Could not find an audio file for coda annotations with keyword [%s]' % audio_file_keyword)
+      if len(filepaths) > 1:
+        raise AssertionError('Found too many audio files for coda annotations with keyword [%s]' % audio_file_keyword)
+      audio_filepath = filepaths[0]
+      # Get the device ID as the name of its parent folder.
+      device_id = os.path.split(os.path.dirname(audio_filepath))[-1]
+      # Get the start time of the file from its filename and the specified offset for this device.
+      filename = os.path.basename(audio_filepath)
+      start_time_ms = int(re.search('\d{13}', filename)[0])
+      start_time_s = start_time_ms/1000.0
+      start_time_s += epoch_offsets_toAdd_s[device_id]
+      # Store the result to reduce overhead next coda row.
+      audio_file_start_times_s[audio_file_keyword] = start_time_s
+    audio_file_start_time_s = audio_file_start_times_s[audio_file_keyword]
+    # Get click timing information.
+    coda_start_time_s = audio_file_start_time_s + float(coda_row[tfs_columnIndex])
+    click_icis_s_forCoda = [float(ici) for ici in itemgetter(*ici_columnIndexes)(coda_row)]
+    click_icis_s_forCoda = [ici for ici in click_icis_s_forCoda if ici > 0]
+    click_times_s_forCoda = coda_start_time_s + np.cumsum([0.0] + click_icis_s_forCoda)
+    # Get the whale index number.
+    whale_index = int(coda_row[whale_columnIndex])
+    # Store the information in each field array.
+    coda_start_times_s.append(coda_start_time_s)
+    click_times_s.append(click_times_s_forCoda)
+    click_icis_s.append(click_icis_s_forCoda)
+    whale_indexes.append(whale_index)
+    
+  return (coda_start_times_s, click_icis_s, click_times_s, whale_indexes)
+
   
   
 

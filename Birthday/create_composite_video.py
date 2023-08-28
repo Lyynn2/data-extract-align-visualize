@@ -15,10 +15,12 @@ import proglog
 
 import cv2
 import decord
+
 import pyqtgraph
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from pyqtgraph.Qt.QtGui import QPixmap, QImage
 import pyqtgraph.exporters
+import distinctipy
 
 from helpers import *
 
@@ -44,10 +46,10 @@ composite_layout = OrderedDict([
   ('Drone Positions'      , (2, 3, 1, 1)),
   ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
   ('Phone (Pagani)'       , (3, 1, 1, 1)),
-  ('Phone (Salino-Hugg)'   , (3, 2, 1, 1)),
+  ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
   ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
-  # ('Hydrophone (Mevorach)', (0, 0, 1, 1)),
+  ('Coda Annotations',      (5, 0, 1, 4)),
 ])
 
 # Specify the time zone offset to get local time of this data collection day from UTC.
@@ -92,6 +94,7 @@ device_friendlyNames = {
   'Misc/DelPreto_Pixel5'       : 'Phone (DelPreto)',
   'Misc/DelPreto_GoPro'        : 'GoPro (DelPreto)',
   'Drone_Positions'            : 'Drone Positions',
+  '_coda_annotations'          : 'Coda Annotations',
 }
 
 # Define the start/end time of the video.
@@ -127,16 +130,28 @@ device_friendlyNames = {
 # output_video_start_time_str = '2023-07-08 11:54:55 -0400'
 # output_video_start_time_str = '2023-07-08 11:54:00 -0400'
 # output_video_start_time_str = '2023-07-08 14:05:00 -0400'
-output_video_start_time_str = '2023-07-08 10:20:13 -0400'
-output_video_duration_s = 19579
-# output_video_duration_s = 1
-output_video_fps = 30
+
+# # Full span:
+# output_video_start_time_str = '2023-07-08 10:20:13 -0400'
+# output_video_duration_s = 19579
+
+# Hydrophone file 280:
+output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
+output_video_duration_s = 184.32
+
+# # Testing for hydrophone file 280:
+# output_video_start_time_str = '2023-07-08 11:55:10 -0400'
+# output_video_duration_s = 5
+
+# Define frame rate of output video
+output_video_fps = 25
 
 # Define the output video size/resolution and compression.
 composite_layout_column_width = 600 # also defines the scaling/resolution of photos/videos
 subplot_border_size = 8 # ignored if the pyqtgraph subplot method is used
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
-output_video_compressed_rate_MB_s = 0.5 # None to not compress the video
+output_video_compressed_rate_MB_s = None # 0.5 # None to not compress the video
+# Note that the video will be implicitly compressed if audio is added to it
 
 # Define audio track added to the output video.
 add_audio_track_to_output_video_original = True
@@ -160,7 +175,7 @@ audio_plot_spectrogram = True # Will force audio_num_channels_toPlot = 1 for now
 audio_waveform_plot_pens = [pyqtgraph.mkPen([255, 255, 255], width=4),
                             pyqtgraph.mkPen([255, 0, 255], width=1)]
 audio_spectrogram_frequency_range = [0e3, min(40e3, audio_resample_rate_hz//2)]
-audio_spectrogram_window_s = 0.03
+audio_spectrogram_target_window_s = 0.03 # note that the achieved window may be a bit different
 # audio_spectrogram_colormap = 'CET-L16' # 'inferno', 'CET-CBTL1', 'CET-L1', 'CET-L16', 'CET-L3', 'CET-R1'
 audio_spectrogram_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
 # audio_spectrogram_colormap = pyqtgraph.colormap.get('nipy_spectral', source='matplotlib', skipCache=True)
@@ -183,8 +198,30 @@ drone_plot_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', 
 drone_plot_color_lookup = drone_plot_colormap.getLookupTable(start=0, stop=1, nPts=1000)
 drone_plot_color_lookup_keys = np.linspace(start=0, stop=150, num=1000)
 drone_colorbar_tickSpacing_m = {'major':25, 'minor':25}
+drone_plot_label_color = (150, 150, 150) # RGB
 drone_plot_symbolSize = 25
 drone_plot_font_size = 16
+
+# Configure coda annotations plotting.
+coda_annotations_plot_yrange = [-35, 625] # add a little at the top to shift the tick label down and avoid it being cut off
+coda_annotations_plot_pen_width = 10
+coda_annotations_plot_symbolPen_width_certain = 2
+coda_annotations_plot_symbolPen_width_uncertain = 4
+coda_annotations_plot_symbolPen_outlineColor_certain = (150, 150, 150) # RGB
+coda_annotations_plot_symbolPen_outlineColor_uncertain = (255, 0, 0) # RGB
+coda_annotations_plot_get_symbol = lambda whale_index: 'd' if whale_index >= 20 else 'o'
+coda_annotations_plot_get_symbol_endClick = lambda whale_index: 't' if whale_index >= 20 else 's'
+coda_annotations_plot_get_symbol_size = lambda whale_index: 14 if whale_index >= 20 else 16
+coda_annotations_plot_currentTime_pen = pen=pyqtgraph.mkPen([200, 200, 200], width=10)
+coda_annotations_plot_font_size = 20
+coda_annotations_plot_tickSpacing_s = {'minor':1, 'major':1}
+coda_annotations_plot_duration_beforeCurrentTime_s = audio_plot_duration_beforeCurrentTime_s #+ 0.325
+coda_annotations_plot_duration_afterCurrentTime_s = audio_plot_duration_afterCurrentTime_s #+ 0.325
+coda_annotations_plot_label_color = (150, 150, 150) # RGB
+# Try to make the grid of the alignment plot line up with the grid of the spectrogram plot.
+# TODO make this more automatic somehow?
+coda_annotations_plot_widthScaleFactor = 0.94
+coda_annotations_plot_horizontal_alignment = 0.013 # fraction of subplot width by which to shift the codas plot
 
 # Configure how device timestamps are matched with output video frame timestamps.
 timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
@@ -192,6 +229,7 @@ timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_cu
   'audio': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
   'image': (1, 1/output_video_fps), # first entry controls how long an image will be shown
   'drone': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
+  'codas': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
 }
 
 # Method of creating the composite visualization frame.
@@ -209,9 +247,7 @@ if audio_plot_waveform:
   audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
   audio_timestamps_toPlot_s = np.arange(start=0, stop=audio_plot_length)/audio_resample_rate_hz - audio_plot_duration_beforeCurrentTime_s
 elif audio_plot_spectrogram:
-  audio_plot_length_beforeCurrentTime = int(audio_plot_duration_beforeCurrentTime_s/audio_spectrogram_window_s)
-  audio_plot_length_afterCurrentTime = int(audio_plot_duration_afterCurrentTime_s/audio_spectrogram_window_s)
-  audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
+  pass # will be derived later once the window length is known
 audio_plot_duration_s = (audio_plot_duration_beforeCurrentTime_s + audio_plot_duration_afterCurrentTime_s)
 
 output_video_banner_fontScale = None # will be determined later based on the size of the banner
@@ -339,6 +375,12 @@ def add_timestamp_banner(img, timestamp_s):
 #     data is the filepath again
 media_infos = OrderedDict()
 drone_datas = OrderedDict()
+coda_annotations_data = { # Will create one combined data from all files, instead of a mapping from file to data
+  'coda_start_times_s': [],
+  'click_icis_s': [],
+  'click_times_s': [],
+  'whale_indexes': [],
+}
 
 print()
 print('Extracting timestamps and pointers to data for every frame/photo/audio')
@@ -360,24 +402,30 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   # Skip files that start after the composite video ends.
   # Do this now, so the below loop can know how many files there are (for printing purposes and whatnot).
   filepaths_toKeep = []
-  for (file_index, filepath) in enumerate(filepaths):
-    # Get the start time in epoch time
-    filename = os.path.basename(filepath)
-    start_time_ms = int(re.search('\d{13}', filename)[0])
-    start_time_s = start_time_ms/1000.0
-    start_time_s += epoch_offsets_toAdd_s[device_id]
-    if start_time_s <= (output_video_start_time_s+output_video_duration_s):
-      filepaths_toKeep.append(filepath)
+  if 'coda_annotations' not in device_id:
+    for (file_index, filepath) in enumerate(filepaths):
+      # Get the start time in epoch time
+      filename = os.path.basename(filepath)
+      start_time_ms = int(re.search('\d{13}', filename)[0])
+      start_time_s = start_time_ms/1000.0
+      start_time_s += epoch_offsets_toAdd_s[device_id]
+      if start_time_s <= (output_video_start_time_s+output_video_duration_s):
+        filepaths_toKeep.append(filepath)
+  else:
+    filepaths_toKeep = filepaths
   print('  Found %4d files for device [%s] (ignored %d files starting after the composite video)' % (len(filepaths_toKeep), device_friendlyName, len(filepaths) - len(filepaths_toKeep)))
   filepaths = filepaths_toKeep
-  
+
   # Loop through each file to extract its timestamps and data pointers.
   for (file_index, filepath) in enumerate(filepaths):
     # Get the start time in epoch time
     filename = os.path.basename(filepath)
-    start_time_ms = int(re.search('\d{13}', filename)[0])
-    start_time_s = start_time_ms/1000.0
-    start_time_s += epoch_offsets_toAdd_s[device_id]
+    if 'coda_annotations' not in device_id:
+      start_time_ms = int(re.search('\d{13}', filename)[0])
+      start_time_s = start_time_ms/1000.0
+      start_time_s += epoch_offsets_toAdd_s[device_id]
+    else:
+      start_time_s = None
     # Process the data/timestamps.
     if is_video(filepath):
       (video_reader, frame_rate, num_frames) = get_video_reader(filepath,
@@ -436,9 +484,14 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
         print('    Computing spectrogram for file %2d/%2d     ' % (file_index+1, len(filepaths)), end='')
         spectrogram_f, spectrogram_t, spectrogram = \
           signal.spectrogram(audio_data[:,0], audio_resample_rate_hz,
-                             window=signal.get_window('tukey', int(audio_spectrogram_window_s*audio_resample_rate_hz)),
-                             scaling='density', # density or spectrum (default is density)
+                             window=signal.get_window('tukey', int(audio_spectrogram_target_window_s * audio_resample_rate_hz)),
+                             scaling='density',  # density or spectrum (default is density)
                              nperseg=None)
+        # Compute the audio plot range based on the achieved window size.
+        audio_spectrogram_window_s = np.mean(np.diff(spectrogram_t))
+        audio_plot_length_beforeCurrentTime = int(audio_plot_duration_beforeCurrentTime_s/audio_spectrogram_window_s)
+        audio_plot_length_afterCurrentTime = int(audio_plot_duration_afterCurrentTime_s/audio_spectrogram_window_s)
+        audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
         # Truncate to the desired frequency range.
         min_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[0])
         max_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[-1])
@@ -468,6 +521,14 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
         media_infos[device_id][filepath] = (timestamps_s, audio_data)
       if file_index == len(filepaths)-1:
         print()
+    elif is_coda_annotations(filepath):
+      (coda_start_times_s, click_icis_s, click_times_s, whale_indexes) = \
+        get_coda_annotations(filepath, data_dir_root, epoch_offsets_toAdd_s)
+      coda_annotations_data['coda_start_times_s'].extend(coda_start_times_s)
+      coda_annotations_data['click_icis_s'].extend(click_icis_s)
+      coda_annotations_data['click_times_s'].extend(click_times_s)
+      coda_annotations_data['whale_indexes'].extend(whale_indexes)
+      del media_infos[device_id]
 
 # Remove devices with no data for the composite video.
 device_ids_to_remove = []
@@ -509,7 +570,7 @@ if use_pyqtgraph_subplots:
       # Note that this is done after scaling, since scaling the text could make it unreadable.
       if label is not None:
         draw_text_on_image(data, label, pos=(0,-1),
-                           font_scale=0.5, font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX)
+                           font_scale=0.5, font_thickness=1, font=cv2.FONT_HERSHEY_SIMPLEX)
       # Update the subplot with the image.
       pixmap = cv2_to_pixmap(data)
       layout_widget.setPixmap(pixmap)
@@ -652,18 +713,30 @@ if use_pyqtgraph_subplots:
 # Alternative option using OpenCV instead of PyQtGraph for the subplotting/layout
 
 if use_opencv_subplots:
-  def get_slice_indexes_for_subplot_update(layout_specs, subplot_img=None):
+  def get_slice_indexes_for_subplot_update(layout_specs, subplot_img=None, horizontal_alignment='center'):
     (row, col, rowspan, colspan) = layout_specs
     # Get the indexes of the total space allocated to this subplot.
     start_col_index = subplot_border_size*(col+1) + composite_layout_column_width*(col)
     end_col_index = start_col_index + composite_layout_column_width*(colspan) + subplot_border_size*(colspan-1) - 1
     start_row_index = subplot_border_size*(row+1) + composite_layout_row_height*(row)
     end_row_index = start_row_index + composite_layout_row_height*(rowspan) + subplot_border_size*(rowspan-1) - 1
-    # Center the desired image in the subplot.
+    # Position the desired image in the subplot.
     if subplot_img is not None:
       subplot_width = end_col_index - start_col_index + 1
-      pad_left = (subplot_width - subplot_img.shape[1])//2
-      pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+      if horizontal_alignment == 'center':
+        pad_left = (subplot_width - subplot_img.shape[1])//2
+        pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+      elif horizontal_alignment == 'left':
+        pad_left = 0
+        pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+      elif horizontal_alignment == 'right':
+        pad_right = 0
+        pad_left = (subplot_width - subplot_img.shape[1]) - pad_right
+      elif isinstance(horizontal_alignment, float): # fractional shift from the left
+        pad_left = round(subplot_width*horizontal_alignment)
+        pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+      else:
+        raise AssertionError('Unknown subplot alignment option [%s]' % horizontal_alignment)
       start_col_index += pad_left
       end_col_index -= pad_right
       subplot_height = end_row_index - start_row_index + 1
@@ -675,7 +748,7 @@ if use_opencv_subplots:
     # Increment end indexes since the end indexes computed above were considered inclusive,
     #  but slicing will be exclusive of the end indexes.
     return (start_row_index, end_row_index+1, start_col_index, end_col_index+1)
-  
+
   # Define a helper to update a subplot with new device data.
   # composite_img is the composite frame image to update.
   # layout_specs is (row, col, rowspan, colspan) of the subplot location.
@@ -684,12 +757,13 @@ if use_opencv_subplots:
   # audio_graphics_layout and plot_handles are the audio/drone plot items if updating audio/drones.
   def update_subplot(composite_img, layout_specs, data,
                      subplot_label=None, subplot_label_color=None,
+                     subplot_horizontal_alignment='center',
                      plot_handles=None):
-    
+
     if is_image(data[0]):
       data = data[0]
       # Update the subplot within the image.
-      subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data)
+      subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data, horizontal_alignment=subplot_horizontal_alignment)
       composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
       # Draw text on the subplot if desired.
       # Note that this is done after scaling, since scaling the text could make it unreadable.
@@ -727,7 +801,7 @@ if use_opencv_subplots:
                              # text_bg_color=subplot_label_color,
                              # text_color=None if subplot_label_color is None else (0, 0, 0))
           # Update the composite image with the new subplot image.
-          subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data)
+          subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data, horizontal_alignment=subplot_horizontal_alignment)
           composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
         # Otherwise, draw it on the subplot so there is more room.
         else:
@@ -751,7 +825,7 @@ if use_opencv_subplots:
                              # text_color=None if subplot_label_color is None else (0, 0, 0))
           # Update the composite image with the new subplot image.
           composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = subplot_img
-    
+
     elif is_audio(data[0]):
       if audio_plot_waveform:
         data = data[0]
@@ -774,7 +848,7 @@ if use_opencv_subplots:
         img = scale_image(img, target_width=composite_layout_column_width*colspan,
                                target_height=composite_layout_row_height*rowspan)
         # Update the subplot with the image.
-        composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label)
+        composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
       elif audio_plot_spectrogram:
         (audio_plotWidget, audio_graphics_exporter, h_heatmap, h_colorbar) = plot_handles
         (spectrogram, t_ticks, f_ticks, colorbar_levels) = data
@@ -794,8 +868,8 @@ if use_opencv_subplots:
         img = scale_image(img, target_width=composite_layout_column_width*colspan,
                                target_height=composite_layout_row_height*rowspan)
         # Update the subplot with the image.
-        composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label)
-    
+        composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
+
     elif is_drone_data(data[0]):
       # Set the lines to the new data points.
       drone_coordinates = []
@@ -848,13 +922,32 @@ if use_opencv_subplots:
       img = scale_image(img, target_width=composite_layout_column_width*colspan,
                              target_height=composite_layout_row_height*rowspan)
       # Update the subplot with the image.
-      composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label)
+      composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
+    
+    # Otherwise, assume it is the current time for updating a coda annotation plot.
+    elif isinstance(data[0], (float, int)):
+      current_time_s = data[0]
+      (codas_graphics_layout, codas_plotWidget, currentTime_marker_handle) = plot_handles
+      currentTime_marker_handle.setData(current_time_s * np.array([1, 1]),
+                                        coda_annotations_plot_yrange)
+      codas_plotWidget.setXRange(current_time_s - coda_annotations_plot_duration_beforeCurrentTime_s,
+                                 current_time_s + coda_annotations_plot_duration_afterCurrentTime_s,
+                                 padding=0)
+      # Grab the plot as an image.
+      img = codas_graphics_layout.grab().toImage()
+      img = qimage_to_numpy(img)
+      img = np.array(img[:,:,0:3])
+      (_, _, rowspan, colspan) = layout_specs
+      img = scale_image(img, target_width=composite_layout_column_width*colspan,
+                             target_height=composite_layout_row_height*rowspan)
+      # Update the subplot with the image.
+      composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
     return composite_img
-  
+
   # Create the blank image to use as the background.
   composite_img_blank = np.zeros(shape=(output_video_height, output_video_width, 3), dtype=np.uint8)
   composite_img_dummy = composite_img_blank.copy()
-  
+
   # Store dummy data for each subplot so it can be cleared when no device data is available.
   # Also store the widgets/plots for each audio visualization so they can be updated later.
   # Will use layout_specs as the key, in case multiple devices are in the same subplot.
@@ -941,8 +1034,8 @@ if use_opencv_subplots:
         # Create a random-noise spectrogram.
         spectrogram_f, spectrogram_t, spectrogram = \
           signal.spectrogram(random_audio[:,0], audio_resample_rate_hz,
-                             window=signal.get_window('tukey', int(audio_spectrogram_window_s*audio_resample_rate_hz)),
-                             scaling='density', # density or spectrum (default is density)
+                             window=signal.get_window('tukey', int(audio_spectrogram_target_window_s * audio_resample_rate_hz)),
+                             scaling='density',  # density or spectrum (default is density)
                              nperseg=None)
         # Use the formatting from the example spectrogram.
         (_, t_ticks, f_ticks, colorbar_levels) = example_data
@@ -968,6 +1061,16 @@ if use_opencv_subplots:
         audio_tickLabels_width = audio_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, '7'*audio_tickLabels_numChars).width()
         audio_label_height = audio_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, audio_plotWidget.getAxis('left').label.toPlainText()).height()
         audio_plotWidget.getAxis('left').setWidth(1.15*(audio_tickLabels_width + audio_label_height))
+        # # Add a box around the plot.
+        # audio_plotWidget.showAxis('right')
+        # audio_plotWidget.showAxis('top')
+        # audio_plotWidget.getAxis('right').setTicks([])
+        # audio_plotWidget.getAxis('top').setTicks([])
+        # # Adjust the width of the grid and box.
+        # audio_plotWidget.getAxis('bottom').setPen(width=2)
+        # audio_plotWidget.getAxis('left').setPen(width=2)
+        # audio_plotWidget.getAxis('top').setPen(width=2)
+        # audio_plotWidget.getAxis('right').setPen(width=2)
         # Force an update of the window size (double-check if this is needed?)
         graphics_layout.show()
         graphics_layout.hide()
@@ -993,7 +1096,6 @@ if use_opencv_subplots:
         graphics_layout.show()
 
   # Do the same as above but for drone data visualizations.
-  drone_grid_layout = None
   drone_plot_handles = None
   num_drone_datas = len(drone_datas)
   if num_drone_datas > 0:
@@ -1004,8 +1106,6 @@ if use_opencv_subplots:
     # The top level will be a GraphicsLayout, since that seems easier to export to an image.
     # Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
     drone_graphics_layout = pyqtgraph.GraphicsLayoutWidget()
-    # drone_grid_layout = QtWidgets.QGridLayout()
-    # drone_graphics_layout.setLayout(drone_grid_layout)
     # Create a plot for the data, that is set to the target size.
     drone_plotWidget = pyqtgraph.PlotItem()
     drone_graphics_layout.addItem(drone_plotWidget, *(0, 0, 1, 1))
@@ -1044,6 +1144,9 @@ if use_opencv_subplots:
     drone_plotWidget.getAxis('left').setPen(width=6)
     drone_plotWidget.getAxis('top').setPen(width=6)
     drone_plotWidget.getAxis('right').setPen(width=6)
+    # Adjust the label color.
+    drone_plotWidget.getAxis('bottom').setTextPen(drone_plot_label_color)
+    drone_plotWidget.getAxis('left').setTextPen(drone_plot_label_color)
     # Put the grid behind the plotted data.
     drone_plotWidget.getAxis('bottom').setZValue(-1000)
     drone_plotWidget.getAxis('left').setZValue(-1000)
@@ -1093,7 +1196,148 @@ if use_opencv_subplots:
     QtCore.QCoreApplication.processEvents()
     if show_visualization_window:
       drone_graphics_layout.show()
-  
+
+  # Do the same as above but for coda annotations visualizations.
+  coda_annotations_plot_handles = None
+  coda_annotations_graphics_layout = None
+  num_coda_annotations = len(coda_annotations_data['coda_start_times_s'])
+  if num_coda_annotations > 0:
+    # Find the layout for the drone plot.
+    coda_annotations_layout_specs = composite_layout['Coda Annotations']
+    (row, col, rowspan, colspan) = coda_annotations_layout_specs
+    # Initialize the layout if it has not been done already.
+    # The top level will be a GraphicsLayout, since that seems easier to export to an image.
+    # Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
+    coda_annotations_graphics_layout = pyqtgraph.GraphicsLayoutWidget()
+    # Create a plot for the data, that is set to the target size.
+    coda_annotations_plotWidget = pyqtgraph.PlotItem()
+    coda_annotations_graphics_layout.addItem(coda_annotations_plotWidget, *(0, 0, 1, 1))
+    # Set the width.
+    coda_annotations_plot_width = round(composite_layout_column_width*colspan*coda_annotations_plot_widthScaleFactor)
+    coda_annotations_graphics_layout.setGeometry(10, 10, coda_annotations_plot_width,
+                                                         composite_layout_row_height*rowspan)
+    coda_annotations_plotWidget.setMinimumWidth(coda_annotations_plot_width)
+    # # Add a box around the plot.
+    # coda_annotations_plotWidget.showAxis('right')
+    # coda_annotations_plotWidget.showAxis('top')
+    # coda_annotations_plotWidget.getAxis('right').setTicks([])
+    # coda_annotations_plotWidget.getAxis('top').setTicks([])
+    # Show the grid and adjust spacing.
+    coda_annotations_plotWidget.showGrid(x=True, y=True, alpha=0.8)
+    coda_annotations_plotWidget.getAxis('bottom').setTickSpacing(**coda_annotations_plot_tickSpacing_s)
+    # Hide the bottom ticks (and the grid) though to be cleaner.
+    # Assume x axis will be aligned with ticks of the spectrogram.
+    coda_annotations_plotWidget.hideAxis('bottom')
+    # Adjust the width of the grid and box.
+    coda_annotations_plotWidget.getAxis('bottom').setPen(width=5)
+    coda_annotations_plotWidget.getAxis('left').setPen(width=6)
+    coda_annotations_plotWidget.getAxis('top').setPen(width=5)
+    coda_annotations_plotWidget.getAxis('right').setPen(width=5)
+    # Put the grid behind the plotted data.
+    coda_annotations_plotWidget.getAxis('bottom').setZValue(-1000)
+    coda_annotations_plotWidget.getAxis('left').setZValue(-1000)
+    # Set labels and fonts.
+    coda_annotations_plotWidget.getAxis('left').setLabel('Inter-Click Interval [ms]')
+    coda_annotations_plotWidget.getAxis('bottom').setLabel('')
+    coda_annotations_plot_font = QtGui.QFont()
+    coda_annotations_plot_font.setPointSize(coda_annotations_plot_font_size)
+    coda_annotations_plotWidget.getAxis('bottom').label.setFont(coda_annotations_plot_font)
+    coda_annotations_plotWidget.getAxis('bottom').setTickFont(coda_annotations_plot_font)
+    coda_annotations_plotWidget.getAxis('left').label.setFont(coda_annotations_plot_font)
+    coda_annotations_plotWidget.getAxis('left').setTickFont(coda_annotations_plot_font)
+    coda_annotations_plotWidget.getAxis('left').setTextPen(coda_annotations_plot_label_color)
+    # Adjust the width of the axis to accommodate the tick labels and the axis label in the new font.
+    coda_annotations_plot_font_metrics = QtGui.QFontMetricsF(coda_annotations_plot_font)
+    coda_annotations_tickLabels_maxChars = max([len(str(x)) for x in coda_annotations_plot_yrange])
+    coda_annotations_tickLabels_maxIndex = [i for (i, x) in enumerate(coda_annotations_plot_yrange) if len(str(x)) == coda_annotations_tickLabels_maxChars][0]
+    coda_annotations_tickLabels_maxString = str(coda_annotations_plot_yrange[coda_annotations_tickLabels_maxIndex])
+    coda_annotations_tickLabels_width = coda_annotations_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, coda_annotations_tickLabels_maxString).width()
+    coda_annotations_label_height = coda_annotations_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, coda_annotations_plotWidget.getAxis('left').label.toPlainText()).height()
+    coda_annotations_plotWidget.getAxis('left').setWidth(1.15*(coda_annotations_tickLabels_width + coda_annotations_label_height))
+    # # Try to add padding to make the grid align with a spectrogram grid above this subplot.
+    # if coda_annotations_plot_align_with_spectrogram_above:
+    #   (audio_plotWidget, _, _, h_colorbar) = list(audio_plot_handles.values())[0]
+    #   max_leftAxis_width = max(coda_annotations_plotWidget.getAxis('left').width(),
+    #                            audio_plotWidget.getAxis('left').width())
+    #   print('left axis widths', coda_annotations_plotWidget.getAxis('left').width(),
+    #         audio_plotWidget.getAxis('left').width())
+    #   print('colorbar axis width:', h_colorbar.axis.width())
+    #   print(dir(h_colorbar))
+    #   print('colorbar width:', h_colorbar.width())
+    #   coda_annotations_plotWidget.getAxis('left').setWidth(max_leftAxis_width)
+    #   coda_annotations_plotWidget.getAxis('right').setWidth(h_colorbar.axis.width())
+      
+    # Get visibly distinct colors for each whale index.
+    whale_indexes_all = coda_annotations_data['whale_indexes']
+    unique_whale_indexes = sorted(list(OrderedDict(zip(whale_indexes_all, whale_indexes_all)).keys()))
+    unique_whale_indexes_uncertain = [x for x in unique_whale_indexes if x >= 20]
+    # Get colors for more 'certain' whales, which avoid red colors.
+    whale_colors_certain = [(0, 1, 0), (1, 0, 1), (1, 1, 0), (0, 1, 1), (1, 1, 1)]
+    whale_colors_certain_extra = distinctipy.get_colors(len(unique_whale_indexes) - len(unique_whale_indexes_uncertain) - len(whale_colors_certain),
+                                                        exclude_colors=[(1, 0, 0), (0, 0, 0)] + whale_colors_certain,
+                                                        rng=3,
+                                                        pastel_factor=0.5,
+                                                        n_attempts=1000)
+    whale_colors_certain_extra.reverse()
+    whale_colors_certain += whale_colors_certain_extra
+    # Get colors for 'uncertain' whales that avoids green and colors already chosen.
+    whale_colors_uncertain = distinctipy.get_colors(len(unique_whale_indexes_uncertain),
+                                                    exclude_colors=[(0, 0, 0), (0, 1, 0), (1, 1, 1)]
+                                                                   + whale_colors_certain,
+                                                    rng=6,
+                                                    pastel_factor=0.8,
+                                                    n_attempts=1000)
+    # Get a full list of whale colors, with RGB values scaled to 255 instead of 1.
+    whale_colors = [distinctipy.get_rgb256(c) for c in whale_colors_certain + whale_colors_uncertain]
+    whale_pens = [pyqtgraph.mkPen(whale_color, width=coda_annotations_plot_pen_width) for whale_color in whale_colors]
+    whale_symbol_pens = [pyqtgraph.mkPen(coda_annotations_plot_symbolPen_outlineColor_certain if whale_index < 20 else coda_annotations_plot_symbolPen_outlineColor_uncertain,
+                                         width=coda_annotations_plot_symbolPen_width_certain if whale_index < 20 else coda_annotations_plot_symbolPen_width_uncertain)
+                         for whale_index in unique_whale_indexes]
+    
+    # Plot the current-time marker.
+    codas_currentTime_handle = coda_annotations_plotWidget.plot(
+        x=[0, 0], y=coda_annotations_plot_yrange, pen=coda_annotations_plot_currentTime_pen)
+    # Plot all codas.
+    for coda_index in range(num_coda_annotations):
+      whale_index = coda_annotations_data['whale_indexes'][coda_index]
+      click_times_s = coda_annotations_data['click_times_s'][coda_index]
+      click_icis_s = coda_annotations_data['click_icis_s'][coda_index]
+      if len(click_icis_s) > 0:
+        click_icis_s = click_icis_s + [click_icis_s[-1]]
+      else:
+        click_icis_s = [0.0] # plot single clicks at the bottom of the graph
+      coda_start_time_s = coda_annotations_data['coda_start_times_s'][coda_index]
+      symbols = [coda_annotations_plot_get_symbol(whale_index)]*len(click_times_s)
+      symbols[-1] = coda_annotations_plot_get_symbol_endClick(whale_index)
+      whale_pen = whale_pens[unique_whale_indexes.index(whale_index)]
+      whale_color = whale_colors[unique_whale_indexes.index(whale_index)]
+      whale_symbol_pen = whale_symbol_pens[unique_whale_indexes.index(whale_index)]
+      symbol_size = coda_annotations_plot_get_symbol_size(whale_index)
+      coda_annotations_plotWidget.plot(x=click_times_s, y=np.array(click_icis_s)*1000,
+                                       symbol=symbols,
+                                       symbolSize=symbol_size, pen=whale_pen,
+                                       symbolBrush=whale_color, symbolPen=whale_symbol_pen)
+    # Set the plot bounds.
+    coda_annotations_plotWidget.setXRange(0 - coda_annotations_plot_duration_beforeCurrentTime_s,
+                                          0 + coda_annotations_plot_duration_afterCurrentTime_s,
+                                          padding=0)
+    coda_annotations_plotWidget.setYRange(*coda_annotations_plot_yrange, padding=0)
+    # Store the line handles.
+    coda_annotations_plot_handles = (coda_annotations_graphics_layout, coda_annotations_plotWidget, codas_currentTime_handle)
+    # Set dummy data as a time that will not exist.
+    coda_annotations_dummy_data = 0
+    # Update the example composite image.
+    update_subplot(composite_img_dummy, coda_annotations_layout_specs, [coda_annotations_dummy_data],
+                   subplot_label=None,
+                   subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
+                   plot_handles=coda_annotations_plot_handles)
+    # Store the dummy data.
+    dummy_datas[str(coda_annotations_layout_specs)] = [coda_annotations_dummy_data]
+    # Show the window if desired.
+    QtCore.QCoreApplication.processEvents()
+    if show_visualization_window:
+      coda_annotations_graphics_layout.show()
+
   # Show the window if desired.
   if show_visualization_window or debug_composite_layout:
     cv2.imshow('Happy Birthday!', cv2.cvtColor(composite_img_dummy, cv2.COLOR_BGR2RGB))
@@ -1135,15 +1379,15 @@ start_loop_time_s = time.time()
 for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Print periodic status updates.
   if time.time() - last_status_time_s > 10:
-    print(' Processing frame %6d/%6d (%0.2f%%) for time %10d (%s)' %
+    print(' Processing frame %6d/%6d (%0.2f%%) for time %14.3f (%s)' %
           (frame_index+1, output_video_num_frames, 100*(frame_index+1)/output_video_num_frames,
            current_time_s, time_s_to_str(current_time_s, localtime_offset_s, localtime_offset_str)))
     last_status_time_s = time.time()
-  
+
   # Mark that no subplot layouts have been updated.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     layouts_updated[str(layout_specs)] = False
-  
+
   # Loop through each specified device stream.
   # Note that multiple devices may be mapped to the same layout position;
   #  in that case the last device with data for this timestep will be used.
@@ -1174,7 +1418,7 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           success, img = load_frame(data, data_index,
                                     target_width=composite_layout_column_width*colspan,
                                     target_height=composite_layout_row_height*rowspan)
-          
+
           if success:
             duration_s_readVideos += time.time() - t0
             readVideos_count += 1
@@ -1308,7 +1552,18 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         layouts_showing_dummyData[str(layout_specs)] = False
         layouts_prevState[str(layout_specs)] = (drone_data_toPlot)
         duration_s_updatePlots_total += time.time() - t0
-  
+    # Check if this is a coda-annotations layout, and if so update the plot.
+    if device_id == '_coda_annotations':
+      t0 = time.time()
+      update_subplot(composite_img_current, layout_specs, [current_time_s],
+                     subplot_label=None,
+                     subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
+                     plot_handles=coda_annotations_plot_handles)
+      layouts_updated[str(layout_specs)] = True
+      layouts_showing_dummyData[str(layout_specs)] = False
+      layouts_prevState[str(layout_specs)] = (current_time_s)
+      duration_s_updatePlots_total += time.time() - t0
+
   # If a layout was not updated, show its dummy data.
   # But only spend time updating it if it isn't already showing dummy data.
   for (device_friendlyName, layout_specs) in composite_layout.items():
@@ -1330,13 +1585,13 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
       layouts_showing_dummyData[str(layout_specs)] = True
       duration_s_updatePlots_total += time.time() - t0
       layouts_prevState[str(layout_specs)] = None
-  
+
   # Refresh the figure with the updated subplots.
   if use_pyqtgraph_subplots or show_visualization_window:
     t0 = time.time()
     QtCore.QCoreApplication.processEvents()
     duration_s_updatePlots_total += time.time() - t0
-  
+
   # Render the figure into a composite frame image.
   if use_pyqtgraph_subplots:
     t0 = time.time()
@@ -1451,7 +1706,7 @@ for output_video_filepath_toAddAudio in output_video_filepaths_toAddAudio:
       audio_start_time_s = audio_start_time_ms/1000.0
       audio_start_time_s += epoch_offsets_toAdd_s[device_id]
       (audio_rate, audio_data) = wavfile.read(filepath)
-      audio_duration_s = (audio_data.shape[0]-1)/audio_rate
+      audio_duration_s = audio_data.shape[0]/audio_rate
       audio_end_time_s = audio_start_time_s + audio_duration_s
       
       audio_clip = None
