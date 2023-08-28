@@ -49,7 +49,8 @@ composite_layout = OrderedDict([
   ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
   ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
-  ('Coda Annotations',      (5, 0, 1, 4)),
+  ('Codas (ICI)',           (5, 0, 1, 4)),
+  ('Codas (TFS)',           (6, 0, 1, 4)),
 ])
 
 # Specify the time zone offset to get local time of this data collection day from UTC.
@@ -94,7 +95,7 @@ device_friendlyNames = {
   'Misc/DelPreto_Pixel5'       : 'Phone (DelPreto)',
   'Misc/DelPreto_GoPro'        : 'GoPro (DelPreto)',
   'Drone_Positions'            : 'Drone Positions',
-  '_coda_annotations'          : 'Coda Annotations',
+  '_coda_annotations'          : 'Codas', # will catch "Codas (ICI)" and "Codas (TFS)"
 }
 
 # Define the start/end time of the video.
@@ -181,6 +182,7 @@ audio_spectrogram_colormap = pyqtgraph.colormap.get('gist_stern', source='matplo
 # audio_spectrogram_colormap = pyqtgraph.colormap.get('nipy_spectral', source='matplotlib', skipCache=True)
 # audio_spectrogram_colormap = pyqtgraph.colormap.get('turbo', source='matplotlib', skipCache=True)
 audio_plot_font_size = 20
+audio_plot_hide_xlabels = True # e.g. if coda plot beneath it will have the labels instead
 
 # Configure drone plotting.
 drone_plot_reference_location_lonLat = [-61.373179, 15.306914]
@@ -203,25 +205,29 @@ drone_plot_symbolSize = 25
 drone_plot_font_size = 16
 
 # Configure coda annotations plotting.
-coda_annotations_plot_yrange = [-35, 625] # add a little at the top to shift the tick label down and avoid it being cut off
-coda_annotations_plot_pen_width = 10
-coda_annotations_plot_symbolPen_width_certain = 2
-coda_annotations_plot_symbolPen_width_uncertain = 4
-coda_annotations_plot_symbolPen_outlineColor_certain = (150, 150, 150) # RGB
-coda_annotations_plot_symbolPen_outlineColor_uncertain = (255, 0, 0) # RGB
-coda_annotations_plot_get_symbol = lambda whale_index: 'd' if whale_index >= 20 else 'o'
-coda_annotations_plot_get_symbol_endClick = lambda whale_index: 't' if whale_index >= 20 else 's'
-coda_annotations_plot_get_symbol_size = lambda whale_index: 14 if whale_index >= 20 else 16
-coda_annotations_plot_currentTime_pen = pen=pyqtgraph.mkPen([200, 200, 200], width=10)
-coda_annotations_plot_font_size = 20
-coda_annotations_plot_tickSpacing_s = {'minor':1, 'major':1}
-coda_annotations_plot_duration_beforeCurrentTime_s = audio_plot_duration_beforeCurrentTime_s #+ 0.325
-coda_annotations_plot_duration_afterCurrentTime_s = audio_plot_duration_afterCurrentTime_s #+ 0.325
-coda_annotations_plot_label_color = (150, 150, 150) # RGB
+codas_plot_yrange = {'ici': [-35, 625], # add a little at the top to shift the tick label down and avoid it being cut off
+                     'tfs': 'auto'}
+codas_plot_pen_width = 10
+codas_plot_symbolPen_width_certain = 2
+codas_plot_symbolPen_width_uncertain = 4
+codas_plot_symbolPen_outlineColor_certain = (150, 150, 150) # RGB
+codas_plot_symbolPen_outlineColor_uncertain = (255, 0, 0) # RGB
+codas_plot_get_symbol = lambda whale_index: 'd' if whale_index >= 20 else 'o'
+codas_plot_get_symbol_endClick = lambda whale_index: 't' if whale_index >= 20 else 's'
+codas_plot_get_symbol_size = lambda whale_index: 14 if whale_index >= 20 else 16
+codas_plot_currentTime_pen = pen=pyqtgraph.mkPen([200, 200, 200], width=12)
+codas_plot_font_size = 20
+codas_plot_x_tickSpacing_s = {'ici': {'minor':1, 'major':1},
+                              'tfs': {'minor':1, 'major':1}}
+codas_plot_duration_beforeCurrentTime_s = audio_plot_duration_beforeCurrentTime_s #+ 0.325
+codas_plot_duration_afterCurrentTime_s = audio_plot_duration_afterCurrentTime_s #+ 0.325
+codas_plot_label_color = (150, 150, 150) # RGB
+codas_plot_hide_xlabels = {'ici': True, 'tfs': False} # e.g. if a spectrogram plot beneath it will have the labels instead
+codas_plot_tfs_scaleFactor = 1
 # Try to make the grid of the alignment plot line up with the grid of the spectrogram plot.
 # TODO make this more automatic somehow?
-coda_annotations_plot_widthScaleFactor = 0.94
-coda_annotations_plot_horizontal_alignment = 0.013 # fraction of subplot width by which to shift the codas plot
+coda_annotations_plot_align_with_spectrogram_above = True
+codas_plot_horizontal_alignment = 0.013 # fraction of subplot width by which to shift the codas plot
 
 # Configure how device timestamps are matched with output video frame timestamps.
 timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
@@ -279,6 +285,8 @@ output_video_filepath = os.path.join(data_dir_root,
 
 # Convert a device friendly name to a device ID.
 def device_friendlyName_to_id(device_friendlyName_toFind):
+  if 'Codas (' in device_friendlyName_toFind:
+    device_friendlyName_toFind = 'Codas'
   for (device_id, device_friendlyName) in device_friendlyNames.items():
     if device_friendlyName == device_friendlyName_toFind:
       return device_id
@@ -376,7 +384,7 @@ def add_timestamp_banner(img, timestamp_s):
 #     data is the filepath again
 media_infos = OrderedDict()
 drone_datas = OrderedDict()
-coda_annotations_data = { # Will create one combined data from all files, instead of a mapping from file to data
+codas_data = { # Will create one combined data from all files, instead of a mapping from file to data
   'coda_start_times_s': [],
   'coda_end_times_s': [],
   'click_icis_s': [],
@@ -530,11 +538,11 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
     elif is_coda_annotations(filepath):
       (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes) = \
         get_coda_annotations(filepath, data_dir_root, epoch_offsets_toAdd_s)
-      coda_annotations_data['coda_start_times_s'].extend(coda_start_times_s)
-      coda_annotations_data['coda_end_times_s'].extend(coda_end_times_s)
-      coda_annotations_data['click_icis_s'].extend(click_icis_s)
-      coda_annotations_data['click_times_s'].extend(click_times_s)
-      coda_annotations_data['whale_indexes'].extend(whale_indexes)
+      codas_data['coda_start_times_s'].extend(coda_start_times_s)
+      codas_data['coda_end_times_s'].extend(coda_end_times_s)
+      codas_data['click_icis_s'].extend(click_icis_s)
+      codas_data['click_times_s'].extend(click_times_s)
+      codas_data['whale_indexes'].extend(whale_indexes)
       del media_infos[device_id]
 
 # Remove devices with no data for the composite video.
@@ -932,30 +940,46 @@ if use_opencv_subplots:
       composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
     
     elif is_coda_annotations(data[0]):
-      (coda_data, current_time_s) = data
-      (codas_graphics_layout, codas_plotWidget, currentTime_marker_handle) = plot_handles
+      (coda_data, current_time_s, coda_plot_type) = data
+      (codas_graphics_layout, codas_plotWidget) = plot_handles
       # Plot all codas in the given window.
-      t00 = time.time()
       codas_plotWidget.clear()
       for coda_index in range(len(coda_data['click_times_s'])):
         click_times_s = coda_data['click_times_s'][coda_index]
         click_icis_s = coda_data['click_icis_s'][coda_index]
         whale_index = coda_data['whale_indexes'][coda_index]
-        if len(click_icis_s) > 0:
-          click_icis_s = click_icis_s + [click_icis_s[-1]] # the last click will be plotted at a fictitious ICI that copies the previous one
-        else:
-          click_icis_s = [0.0] # plot single clicks at the bottom of the graph
-        symbols = [coda_annotations_plot_get_symbol(whale_index)]*len(click_times_s)
-        symbols[-1] = coda_annotations_plot_get_symbol_endClick(whale_index)
+        symbols = [codas_plot_get_symbol(whale_index)] * len(click_times_s)
+        symbols[-1] = codas_plot_get_symbol_endClick(whale_index)
         whale_pen = whale_pens[unique_whale_indexes.index(whale_index)]
         whale_color = whale_colors[unique_whale_indexes.index(whale_index)]
         whale_symbol_pen = whale_symbol_pens[unique_whale_indexes.index(whale_index)]
-        symbol_size = coda_annotations_plot_get_symbol_size(whale_index)
-        coda_annotations_plotWidget.plot(x=click_times_s - current_time_s, # make time relative to current time
-                                         y=np.array(click_icis_s)*1000, # convert to milliseconds
-                                         symbol=symbols,
-                                         symbolSize=symbol_size, pen=whale_pen,
-                                         symbolBrush=whale_color, symbolPen=whale_symbol_pen)
+        symbol_size = codas_plot_get_symbol_size(whale_index)
+        if coda_plot_type == 'ici':
+          if len(click_icis_s) > 0:
+            click_icis_s = click_icis_s + [click_icis_s[-1]] # the last click will be plotted at a fictitious ICI that copies the previous one
+          else:
+            click_icis_s = [0.0] # plot single clicks at the bottom of the graph
+          codas_plotWidget.plot(x=click_times_s - current_time_s,  # make time relative to current time
+                                y=np.array(click_icis_s)*1000,  # convert to milliseconds
+                                symbol=symbols,
+                                symbolSize=symbol_size, pen=whale_pen,
+                                symbolBrush=whale_color, symbolPen=whale_symbol_pen)
+        elif coda_plot_type == 'tfs':
+          codas_plotWidget.plot(x=click_times_s - current_time_s,  # make time relative to current time
+                                y=(click_times_s - click_times_s[0]) * codas_plot_tfs_scaleFactor, # arbitrary scale factor
+                                symbol=symbols,
+                                symbolSize=symbol_size, pen=whale_pen,
+                                symbolBrush=whale_color, symbolPen=whale_symbol_pen)
+      if codas_plot_yrange[coda_plot_type] == 'auto':
+        if len(coda_data['click_times_s']) == 0:
+          codas_plotWidget.setYRange(*[-0.2, 1.2], padding=0)
+        else:
+          codas_plotWidget.enableAutoRange(axis='y', enable=1) # allow automatic scaling that shows 100% of the data
+      # Plot the current-time marker.
+      y_limits = codas_plotWidget.getAxis('left').range
+      codas_currentTime_handle = codas_plotWidget.plot(x=[0, 0], y=y_limits,
+                                                       pen=codas_plot_currentTime_pen)
+      # codas_plotWidget.setYRange(*y_limits, padding=0)
       # Grab the plot as an image.
       img = codas_graphics_layout.grab().toImage()
       img = qimage_to_numpy(img)
@@ -1084,6 +1108,10 @@ if use_opencv_subplots:
         audio_tickLabels_width = audio_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, '7'*audio_tickLabels_numChars).width()
         audio_label_height = audio_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, audio_plotWidget.getAxis('left').label.toPlainText()).height()
         audio_plotWidget.getAxis('left').setWidth(1.15*(audio_tickLabels_width + audio_label_height))
+        # Hide the bottom ticks (and the grid) if desired.
+        #  e.g. assume x axis will be aligned with ticks of the spectrogram.
+        if audio_plot_hide_xlabels:
+          audio_plotWidget.hideAxis('bottom')
         # # Add a box around the plot.
         # audio_plotWidget.showAxis('right')
         # audio_plotWidget.showAxis('top')
@@ -1221,126 +1249,144 @@ if use_opencv_subplots:
       drone_graphics_layout.show()
 
   # Do the same as above but for coda annotations visualizations.
-  coda_annotations_plot_handles = None
-  coda_annotations_graphics_layout = None
-  num_coda_annotations = len(coda_annotations_data['coda_start_times_s'])
-  if num_coda_annotations > 0 and 'Coda Annotations' in composite_layout:
-    # Find the layout for the drone plot.
-    coda_annotations_layout_specs = composite_layout['Coda Annotations']
-    (row, col, rowspan, colspan) = coda_annotations_layout_specs
-    # Initialize the layout if it has not been done already.
-    # The top level will be a GraphicsLayout, since that seems easier to export to an image.
-    # Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
-    coda_annotations_graphics_layout = pyqtgraph.GraphicsLayoutWidget()
-    # Create a plot for the data, that is set to the target size.
-    coda_annotations_plotWidget = pyqtgraph.PlotItem()
-    coda_annotations_graphics_layout.addItem(coda_annotations_plotWidget, *(0, 0, 1, 1))
-    # Set the width.
-    coda_annotations_plot_width = round(composite_layout_column_width*colspan*coda_annotations_plot_widthScaleFactor)
-    coda_annotations_graphics_layout.setGeometry(10, 10, coda_annotations_plot_width,
-                                                         composite_layout_row_height*rowspan)
-    coda_annotations_plotWidget.setMinimumWidth(coda_annotations_plot_width)
-    # # Add a box around the plot.
-    # coda_annotations_plotWidget.showAxis('right')
-    # coda_annotations_plotWidget.showAxis('top')
-    # coda_annotations_plotWidget.getAxis('right').setTicks([])
-    # coda_annotations_plotWidget.getAxis('top').setTicks([])
-    # Show the grid and adjust spacing.
-    coda_annotations_plotWidget.showGrid(x=True, y=True, alpha=0.8)
-    coda_annotations_plotWidget.getAxis('bottom').setTickSpacing(**coda_annotations_plot_tickSpacing_s)
-    # Hide the bottom ticks (and the grid) though to be cleaner.
-    # Assume x axis will be aligned with ticks of the spectrogram.
-    # coda_annotations_plotWidget.hideAxis('bottom')
-    # Adjust the width of the grid and box.
-    coda_annotations_plotWidget.getAxis('bottom').setPen(width=5)
-    coda_annotations_plotWidget.getAxis('left').setPen(width=6)
-    coda_annotations_plotWidget.getAxis('top').setPen(width=5)
-    coda_annotations_plotWidget.getAxis('right').setPen(width=5)
-    # Put the grid behind the plotted data.
-    coda_annotations_plotWidget.getAxis('bottom').setZValue(-1000)
-    coda_annotations_plotWidget.getAxis('left').setZValue(-1000)
-    # Set labels and fonts.
-    coda_annotations_plotWidget.getAxis('left').setLabel('Inter-Click Interval [ms]')
-    coda_annotations_plotWidget.getAxis('bottom').setLabel('')
-    coda_annotations_plot_font = QtGui.QFont()
-    coda_annotations_plot_font.setPointSize(coda_annotations_plot_font_size)
-    coda_annotations_plotWidget.getAxis('bottom').label.setFont(coda_annotations_plot_font)
-    coda_annotations_plotWidget.getAxis('bottom').setTickFont(coda_annotations_plot_font)
-    coda_annotations_plotWidget.getAxis('left').label.setFont(coda_annotations_plot_font)
-    coda_annotations_plotWidget.getAxis('left').setTickFont(coda_annotations_plot_font)
-    coda_annotations_plotWidget.getAxis('left').setTextPen(coda_annotations_plot_label_color)
-    # Adjust the width of the axis to accommodate the tick labels and the axis label in the new font.
-    coda_annotations_plot_font_metrics = QtGui.QFontMetricsF(coda_annotations_plot_font)
-    coda_annotations_tickLabels_maxChars = max([len(str(x)) for x in coda_annotations_plot_yrange])
-    coda_annotations_tickLabels_maxIndex = [i for (i, x) in enumerate(coda_annotations_plot_yrange) if len(str(x)) == coda_annotations_tickLabels_maxChars][0]
-    coda_annotations_tickLabels_maxString = str(coda_annotations_plot_yrange[coda_annotations_tickLabels_maxIndex])
-    coda_annotations_tickLabels_width = coda_annotations_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, coda_annotations_tickLabels_maxString).width()
-    coda_annotations_label_height = coda_annotations_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, coda_annotations_plotWidget.getAxis('left').label.toPlainText()).height()
-    coda_annotations_plotWidget.getAxis('left').setWidth(1.15*(coda_annotations_tickLabels_width + coda_annotations_label_height))
-    # # Try to add padding to make the grid align with a spectrogram grid above this subplot.
-    # if coda_annotations_plot_align_with_spectrogram_above:
-    #   (audio_plotWidget, _, _, h_colorbar) = list(audio_plot_handles.values())[0]
-    #   max_leftAxis_width = max(coda_annotations_plotWidget.getAxis('left').width(),
-    #                            audio_plotWidget.getAxis('left').width())
-    #   print('left axis widths', coda_annotations_plotWidget.getAxis('left').width(),
-    #         audio_plotWidget.getAxis('left').width())
-    #   print('colorbar axis width:', h_colorbar.axis.width())
-    #   print(dir(h_colorbar))
-    #   print('colorbar width:', h_colorbar.width())
-    #   coda_annotations_plotWidget.getAxis('left').setWidth(max_leftAxis_width)
-    #   coda_annotations_plotWidget.getAxis('right').setWidth(h_colorbar.axis.width())
-
-    # Get visibly distinct colors for each whale index.
-    whale_indexes_all = coda_annotations_data['whale_indexes']
-    unique_whale_indexes = sorted(list(OrderedDict(zip(whale_indexes_all, whale_indexes_all)).keys()))
-    unique_whale_indexes_uncertain = [x for x in unique_whale_indexes if x >= 20]
-    # Get colors for more 'certain' whales, which avoid red colors.
-    whale_colors_certain = [(0, 1, 0), (1, 0, 1), (1, 1, 0), (0, 1, 1), (1, 1, 1)]
-    whale_colors_certain_extra = distinctipy.get_colors(len(unique_whale_indexes) - len(unique_whale_indexes_uncertain) - len(whale_colors_certain),
-                                                        exclude_colors=[(1, 0, 0), (0, 0, 0)] + whale_colors_certain,
-                                                        rng=3,
-                                                        pastel_factor=0.5,
-                                                        n_attempts=1000)
-    whale_colors_certain_extra.reverse()
-    whale_colors_certain += whale_colors_certain_extra
-    # Get colors for 'uncertain' whales that avoids green and colors already chosen.
-    whale_colors_uncertain = distinctipy.get_colors(len(unique_whale_indexes_uncertain),
-                                                    exclude_colors=[(0, 0, 0), (0, 1, 0), (1, 1, 1)]
-                                                                   + whale_colors_certain,
-                                                    rng=6,
-                                                    pastel_factor=0.8,
-                                                    n_attempts=1000)
-    # Get a full list of whale colors, with RGB values scaled to 255 instead of 1.
-    whale_colors = [distinctipy.get_rgb256(c) for c in whale_colors_certain + whale_colors_uncertain]
-    whale_pens = [pyqtgraph.mkPen(whale_color, width=coda_annotations_plot_pen_width) for whale_color in whale_colors]
-    whale_symbol_pens = [pyqtgraph.mkPen(coda_annotations_plot_symbolPen_outlineColor_certain if whale_index < 20 else coda_annotations_plot_symbolPen_outlineColor_uncertain,
-                                         width=coda_annotations_plot_symbolPen_width_certain if whale_index < 20 else coda_annotations_plot_symbolPen_width_uncertain)
-                         for whale_index in unique_whale_indexes]
-    
-    # Plot the current-time marker.
-    codas_currentTime_handle = coda_annotations_plotWidget.plot(x=[0, 0], y=coda_annotations_plot_yrange,
-                                                                pen=coda_annotations_plot_currentTime_pen)
-    # Set the plot bounds.
-    coda_annotations_plotWidget.setXRange(0 - coda_annotations_plot_duration_beforeCurrentTime_s,
-                                          0 + coda_annotations_plot_duration_afterCurrentTime_s,
-                                          padding=0)
-    coda_annotations_plotWidget.setYRange(*coda_annotations_plot_yrange, padding=0)
-    # Store the line handles.
-    coda_annotations_plot_handles = (coda_annotations_graphics_layout, coda_annotations_plotWidget, codas_currentTime_handle)
-    # Set dummy data as not having any codas (dict of empty lists) at an epoch time that won't exist (0).
-    coda_annotations_dummy_data = (dict([(key, []) for key in coda_annotations_data]), 0)
-    # Update the example composite image.
-    update_subplot(composite_img_dummy, coda_annotations_layout_specs, coda_annotations_dummy_data,
-                   subplot_label=None,
-                   subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
-                   plot_handles=coda_annotations_plot_handles)
-    # Store the dummy data.
-    dummy_datas[str(coda_annotations_layout_specs)] = coda_annotations_dummy_data
-    # Show the window if desired.
-    QtCore.QCoreApplication.processEvents()
-    if show_visualization_window:
-      coda_annotations_graphics_layout.show()
-
+  num_codas = len(codas_data['coda_start_times_s'])
+  codas_plot_handles = {'ici': None, 'tfs': None}
+  codas_graphics_layout = {'ici': None, 'tfs': None}
+  for coda_plot_type in ['ici', 'tfs']:
+    if num_codas > 0 and 'Codas (%s)' % coda_plot_type.upper() in composite_layout:
+      # Find the layout for the drone plot.
+      codas_layout_specs = composite_layout['Codas (%s)' % coda_plot_type.upper()]
+      (row, col, rowspan, colspan) = codas_layout_specs
+      # Initialize the layout if it has not been done already.
+      # The top level will be a GraphicsLayout, since that seems easier to export to an image.
+      # Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
+      codas_graphics_layout[coda_plot_type] = pyqtgraph.GraphicsLayoutWidget()
+      # Create a plot for the data, that is set to the target size.
+      codas_plotWidget = pyqtgraph.PlotItem()
+      codas_graphics_layout[coda_plot_type].addItem(codas_plotWidget, *(0, 0, 1, 1))
+      # Set the width.
+      if coda_annotations_plot_align_with_spectrogram_above:
+        (audio_plotWidget, _, _, h_colorbar) = list(audio_plot_handles.values())[0]
+        codas_plot_widthScaleFactor = np.round(audio_plotWidget.getAxis('bottom').width() / (composite_layout_column_width * colspan), 2)
+      else:
+        codas_plot_widthScaleFactor = 1
+      codas_plot_width = round(composite_layout_column_width * colspan * codas_plot_widthScaleFactor)
+      codas_graphics_layout[coda_plot_type].setGeometry(10, 10, codas_plot_width,
+                                                        composite_layout_row_height * rowspan)
+      codas_plotWidget.setMinimumWidth(codas_plot_width)
+  
+      # # Add a box around the plot.
+      # codas_plotWidget.showAxis('right')
+      # codas_plotWidget.showAxis('top')
+      # codas_plotWidget.getAxis('right').setTicks([])
+      # codas_plotWidget.getAxis('top').setTicks([])
+      # Show the grid and adjust spacing.
+      codas_plotWidget.showGrid(x=False, y=True, alpha=0.8)
+      codas_plotWidget.getAxis('bottom').setTickSpacing(**codas_plot_x_tickSpacing_s[coda_plot_type])
+      # Hide the bottom ticks (and the grid) if desired.
+      #  e.g. assume x axis will be aligned with ticks of the spectrogram.
+      if codas_plot_hide_xlabels[coda_plot_type]:
+        codas_plotWidget.hideAxis('bottom')
+      # Adjust the width of the grid and box.
+      codas_plotWidget.getAxis('bottom').setPen(width=5)
+      codas_plotWidget.getAxis('left').setPen(width=6)
+      codas_plotWidget.getAxis('top').setPen(width=5)
+      codas_plotWidget.getAxis('right').setPen(width=5)
+      # Put the grid behind the plotted data.
+      codas_plotWidget.getAxis('bottom').setZValue(-1000)
+      codas_plotWidget.getAxis('left').setZValue(-1000)
+      # Set labels and fonts.
+      if coda_plot_type == 'ici':
+        codas_plotWidget.getAxis('left').setLabel('Inter-Click Interval [ms]')
+      elif coda_plot_type == 'tfs':
+        codas_plotWidget.getAxis('left').setLabel('From Coda Start [s]')
+      codas_plotWidget.getAxis('bottom').setLabel('Time [s]')
+      coda_annotations_plot_font = QtGui.QFont()
+      coda_annotations_plot_font.setPointSize(codas_plot_font_size)
+      codas_plotWidget.getAxis('bottom').label.setFont(coda_annotations_plot_font)
+      codas_plotWidget.getAxis('bottom').setTickFont(coda_annotations_plot_font)
+      codas_plotWidget.getAxis('left').label.setFont(coda_annotations_plot_font)
+      codas_plotWidget.getAxis('left').setTickFont(coda_annotations_plot_font)
+      codas_plotWidget.getAxis('left').setTextPen(codas_plot_label_color)
+      codas_plotWidget.getAxis('bottom').setTextPen(codas_plot_label_color)
+      # Adjust the width of the axis to accommodate the tick labels and the axis label in the new font.
+      coda_annotations_plot_font_metrics = QtGui.QFontMetricsF(coda_annotations_plot_font)
+      if coda_plot_type == 'tfs':
+        coda_annotations_tickLabels_maxString = '7.7'
+      else:
+        coda_annotations_tickLabels_maxChars = max([len(str(x)) for x in codas_plot_yrange[coda_plot_type]])
+        coda_annotations_tickLabels_maxIndex = [i for (i, x) in enumerate(codas_plot_yrange[coda_plot_type]) if len(str(x)) == coda_annotations_tickLabels_maxChars][0]
+        coda_annotations_tickLabels_maxString = str(codas_plot_yrange[coda_plot_type][coda_annotations_tickLabels_maxIndex])
+      coda_annotations_tickLabels_width = coda_annotations_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, coda_annotations_tickLabels_maxString).width()
+      coda_annotations_label_height = coda_annotations_plot_font_metrics.size(pyqtgraph.QtCore.Qt.TextFlag.TextSingleLine, codas_plotWidget.getAxis('left').label.toPlainText()).height()
+      codas_plotWidget.getAxis('left').setWidth(1.15 * (coda_annotations_tickLabels_width + coda_annotations_label_height))
+      # # Try to add padding to make the grid align with a spectrogram grid above this subplot.
+      # if coda_annotations_plot_align_with_spectrogram_above:
+      #   (audio_plotWidget, _, _, h_colorbar) = list(audio_plot_handles.values())[0]
+      #   max_leftAxis_width = max(codas_plotWidget.getAxis('left').width(),
+      #                            audio_plotWidget.getAxis('left').width())
+      #   print('left axis widths', codas_plotWidget.getAxis('left').width(),
+      #         audio_plotWidget.getAxis('left').width())
+      #   print('colorbar axis width:', h_colorbar.axis.width())
+      #   print(dir(h_colorbar))
+      #   print('colorbar width:', h_colorbar.width())
+      #   codas_plotWidget.getAxis('left').setWidth(max_leftAxis_width)
+      #   codas_plotWidget.getAxis('right').setWidth(h_colorbar.axis.width())
+  
+      # Get visibly distinct colors for each whale index.
+      whale_indexes_all = codas_data['whale_indexes']
+      unique_whale_indexes = sorted(list(OrderedDict(zip(whale_indexes_all, whale_indexes_all)).keys()))
+      unique_whale_indexes_uncertain = [x for x in unique_whale_indexes if x >= 20]
+      # Get colors for more 'certain' whales, which avoid red colors.
+      whale_colors_certain = [(0, 1, 0), (1, 0, 1), (1, 1, 0), (0, 1, 1), (1, 1, 1)]
+      whale_colors_certain_extra = distinctipy.get_colors(len(unique_whale_indexes) - len(unique_whale_indexes_uncertain) - len(whale_colors_certain),
+                                                          exclude_colors=[(1, 0, 0), (0, 0, 0)] + whale_colors_certain,
+                                                          rng=3,
+                                                          pastel_factor=0.5,
+                                                          n_attempts=1000)
+      whale_colors_certain_extra.reverse()
+      whale_colors_certain += whale_colors_certain_extra
+      # Get colors for 'uncertain' whales that avoids green and colors already chosen.
+      whale_colors_uncertain = distinctipy.get_colors(len(unique_whale_indexes_uncertain),
+                                                      exclude_colors=[(0, 0, 0), (0, 1, 0), (1, 1, 1)]
+                                                                     + whale_colors_certain,
+                                                      rng=6,
+                                                      pastel_factor=0.8,
+                                                      n_attempts=1000)
+      # Get a full list of whale colors, with RGB values scaled to 255 instead of 1.
+      whale_colors = [distinctipy.get_rgb256(c) for c in whale_colors_certain + whale_colors_uncertain]
+      whale_pens = [pyqtgraph.mkPen(whale_color, width=codas_plot_pen_width) for whale_color in whale_colors]
+      whale_symbol_pens = [pyqtgraph.mkPen(codas_plot_symbolPen_outlineColor_certain if whale_index < 20 else codas_plot_symbolPen_outlineColor_uncertain,
+                                           width=codas_plot_symbolPen_width_certain if whale_index < 20 else codas_plot_symbolPen_width_uncertain)
+                           for whale_index in unique_whale_indexes]
+      
+      # Plot the current-time marker.
+      #codas_currentTime_handle = codas_plotWidget.plot(x=[0, 0], y=codas_plot_yrange[coda_plot_type],
+      #                                                 pen=codas_plot_currentTime_pen)
+      # Set the plot bounds.
+      codas_plotWidget.setXRange(0 - codas_plot_duration_beforeCurrentTime_s,
+                                 0 + codas_plot_duration_afterCurrentTime_s,
+                                 padding=0)
+      if codas_plot_yrange[coda_plot_type] == 'auto':
+        codas_plotWidget.enableAutoRange(axis='y', enable=1) # allow automatic scaling that shows 100% of the data
+      else:
+        codas_plotWidget.setYRange(*codas_plot_yrange[coda_plot_type], padding=0)
+      # Store the line handles.
+      codas_plot_handles[coda_plot_type] = (codas_graphics_layout[coda_plot_type], codas_plotWidget)
+      # Set dummy data as not having any codas (dict of empty lists) at an epoch time that won't exist (0).
+      codas_dummy_data = (dict([(key, []) for key in codas_data]), 0, coda_plot_type)
+      # Update the example composite image.
+      update_subplot(composite_img_dummy, codas_layout_specs, codas_dummy_data,
+                     subplot_label=None,
+                     subplot_horizontal_alignment=codas_plot_horizontal_alignment,
+                     plot_handles=codas_plot_handles[coda_plot_type])
+      # Store the dummy data.
+      dummy_datas[str(codas_layout_specs)] = codas_dummy_data
+      # Show the window if desired.
+      QtCore.QCoreApplication.processEvents()
+      if show_visualization_window:
+        codas_graphics_layout[coda_plot_type].show()
+  
   # Show the window if desired.
   if show_visualization_window or debug_composite_layout:
     cv2.imshow('Happy Birthday!', cv2.cvtColor(composite_img_dummy, cv2.COLOR_BGR2RGB))
@@ -1558,27 +1604,28 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
     # Check if this is a coda-annotations layout, and if so update the plot.
     if device_id == '_coda_annotations':
       # Find codas within the current plot window.
-      plot_start_time_s = current_time_s - coda_annotations_plot_duration_beforeCurrentTime_s
-      plot_end_time_s = current_time_s + coda_annotations_plot_duration_afterCurrentTime_s
-      coda_data_toPlot = dict([(key, []) for key in coda_annotations_data])
-      for coda_index in range(num_coda_annotations):
-        coda_start_time_s = coda_annotations_data['coda_start_times_s'][coda_index]
-        coda_end_time_s = coda_annotations_data['coda_end_times_s'][coda_index]
-        click_times_s = coda_annotations_data['click_times_s'][coda_index]
+      plot_start_time_s = current_time_s - codas_plot_duration_beforeCurrentTime_s
+      plot_end_time_s = current_time_s + codas_plot_duration_afterCurrentTime_s
+      coda_data_toPlot = dict([(key, []) for key in codas_data])
+      for coda_index in range(num_codas):
+        coda_start_time_s = codas_data['coda_start_times_s'][coda_index]
+        coda_end_time_s = codas_data['coda_end_times_s'][coda_index]
+        click_times_s = codas_data['click_times_s'][coda_index]
         if (coda_start_time_s >= plot_start_time_s and coda_start_time_s <= plot_end_time_s) \
           or (coda_end_time_s >= plot_start_time_s and coda_end_time_s <= plot_end_time_s):
-            for key in coda_annotations_data:
-              coda_data_toPlot[key].append(coda_annotations_data[key][coda_index])
+            for key in codas_data:
+              coda_data_toPlot[key].append(codas_data[key][coda_index])
       # Only spend time updating the plot if it changed since last frame.
       if coda_data_toPlot == layouts_prevState[str(layout_specs)]:
         layouts_updated[str(layout_specs)] = True
         layouts_showing_dummyData[str(layout_specs)] = False
       else:
         t0 = time.time()
-        update_subplot(composite_img_current, layout_specs, (coda_data_toPlot, current_time_s),
+        coda_plot_type = 'ici' if '(ICI)' in device_friendlyName else 'tfs'
+        update_subplot(composite_img_current, layout_specs, (coda_data_toPlot, current_time_s, coda_plot_type),
                        subplot_label=None,
-                       subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
-                       plot_handles=coda_annotations_plot_handles)
+                       subplot_horizontal_alignment=codas_plot_horizontal_alignment,
+                       plot_handles=codas_plot_handles[coda_plot_type])
         layouts_updated[str(layout_specs)] = True
         layouts_showing_dummyData[str(layout_specs)] = False
         layouts_prevState[str(layout_specs)] = (coda_data_toPlot, current_time_s)
@@ -1601,8 +1648,8 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         elif is_coda_annotations(dummy_datas[str(layout_specs)][0]):
           update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
                          subplot_label=None,
-                         subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
-                         plot_handles=coda_annotations_plot_handles)
+                         subplot_horizontal_alignment=codas_plot_horizontal_alignment,
+                         plot_handles=codas_plot_handles[coda_plot_type])
         else:
           update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
                          subplot_label=None)

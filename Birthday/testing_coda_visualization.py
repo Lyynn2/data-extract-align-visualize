@@ -10,6 +10,9 @@ from collections import OrderedDict
 import pyqtgraph
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from pyqtgraph.Qt.QtGui import QPixmap, QImage
+import pyqtgraph.exporters
+
+import cv2
 
 plot_icis = True
 
@@ -39,9 +42,12 @@ whale_pens = [pyqtgraph.mkPen(whale_color, width=5) for whale_color in whale_col
 
 app = QtWidgets.QApplication([])
 codas_graphics_layout = pyqtgraph.GraphicsLayoutWidget()
-codas_plotWidget = pyqtgraph.PlotItem()
-codas_graphics_layout.addItem(codas_plotWidget, *(0, 0, 1, 1))
-codas_graphics_layout.setGeometry(50, 50, 1000, 1000/2.5)
+codas_grid_layout = QtWidgets.QGridLayout()
+codas_graphics_layout.setLayout(codas_grid_layout)
+codas_plotWidget = pyqtgraph.PlotWidget()
+codas_grid_layout.addWidget(codas_plotWidget, *(0, 0, 1, 1), alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
+codas_graphics_layout.setGeometry(50, 50, 1000, 1000//2.5)
+codas_grid_layout.setRowMinimumHeight(0, 1000//2.5)
 codas_yrange = [0, 600]
 codas_currentTime_handle = codas_plotWidget.plot(x=[5, 5], y=codas_yrange, pen=pyqtgraph.mkPen([200, 200, 200], width=7))
 for coda_row in csv_rows[1:]:
@@ -72,14 +78,37 @@ for coda_row in csv_rows[1:]:
 codas_plotWidget.showGrid(x=True, y=True, alpha=1)
 
 codas_graphics_layout.show()
+codas_graphics_layout.hide()
+
+codas_graphics_exporter = pyqtgraph.exporters.ImageExporter(codas_plotWidget.plotItem)
+codas_graphics_exporter.parameters()['width'] = 1000//2.5
+
+# Convert a PyQtGraph QImage to a numpy array.
+def qimage_to_numpy(qimg):
+  img = qimg.convertToFormat(QtGui.QImage.Format.Format_RGB32)
+  ptr = img.bits()
+  ptr.setsize(img.sizeInBytes())
+  arr = np.array(ptr).reshape(img.height(), img.width(), 4)  #  Copies the data
+  return arr
+
+
+
 t0 = time.time()
 n = 0
-for t in np.arange(start=10, stop=50, step=0.1):
+for t in np.arange(start=10, stop=20, step=0.1):
   codas_currentTime_handle.setData((t+5)*np.array([1, 1]), codas_yrange)
   codas_plotWidget.setXRange(t, t+15)
   # codas_plotWidget.setYRange(*codas_yrange)
-  QtCore.QCoreApplication.processEvents()
+  # QtCore.QCoreApplication.processEvents()
+
+  # img = codas_graphics_layout.grab().toImage()
+  img = codas_graphics_exporter.export(toBytes=True)
+  img = qimage_to_numpy(img)
+  img = np.array(img[:,:,0:3])
+  # cv2.imshow('grab', img)
+  # cv2.waitKey(1)
+  
   n+=1
 print(n/(time.time() - t0))
   
-app.exec()
+# app.exec()
