@@ -347,6 +347,7 @@ def get_coda_annotations(annotation_filepath, data_root_dir, epoch_offsets_toAdd
   ici_columnIndexes = [i for (i, h) in enumerate(headers) if 'ici' in h.lower()]
   # Create a list of data for each desired field.
   coda_start_times_s = []
+  coda_end_times_s = []
   click_icis_s = []
   click_times_s = []
   whale_indexes = []
@@ -381,11 +382,12 @@ def get_coda_annotations(annotation_filepath, data_root_dir, epoch_offsets_toAdd
     whale_index = int(coda_row[whale_columnIndex])
     # Store the information in each field array.
     coda_start_times_s.append(coda_start_time_s)
+    coda_end_times_s.append(coda_start_time_s + sum(click_icis_s_forCoda))
     click_times_s.append(click_times_s_forCoda)
     click_icis_s.append(click_icis_s_forCoda)
     whale_indexes.append(whale_index)
     
-  return (coda_start_times_s, click_icis_s, click_times_s, whale_indexes)
+  return (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes)
 
   
   

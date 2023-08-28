@@ -248,6 +248,7 @@ if audio_plot_waveform:
   audio_timestamps_toPlot_s = np.arange(start=0, stop=audio_plot_length)/audio_resample_rate_hz - audio_plot_duration_beforeCurrentTime_s
 elif audio_plot_spectrogram:
   pass # will be derived later once the window length is known
+audio_spectrogram_window_s = None
 audio_plot_duration_s = (audio_plot_duration_beforeCurrentTime_s + audio_plot_duration_afterCurrentTime_s)
 
 output_video_banner_fontScale = None # will be determined later based on the size of the banner
@@ -377,6 +378,7 @@ media_infos = OrderedDict()
 drone_datas = OrderedDict()
 coda_annotations_data = { # Will create one combined data from all files, instead of a mapping from file to data
   'coda_start_times_s': [],
+  'coda_end_times_s': [],
   'click_icis_s': [],
   'click_times_s': [],
   'whale_indexes': [],
@@ -487,8 +489,12 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
                              window=signal.get_window('tukey', int(audio_spectrogram_target_window_s * audio_resample_rate_hz)),
                              scaling='density',  # density or spectrum (default is density)
                              nperseg=None)
+        # Check that the achieved window size is the same for all files.
+        #  If not, will need to store the plot length variables for each file.
+        if audio_spectrogram_window_s is not None:
+          assert(audio_spectrogram_window_s == np.round(np.mean(np.diff(spectrogram_t)), 6))
         # Compute the audio plot range based on the achieved window size.
-        audio_spectrogram_window_s = np.mean(np.diff(spectrogram_t))
+        audio_spectrogram_window_s = np.round(np.mean(np.diff(spectrogram_t)), 6)
         audio_plot_length_beforeCurrentTime = int(audio_plot_duration_beforeCurrentTime_s/audio_spectrogram_window_s)
         audio_plot_length_afterCurrentTime = int(audio_plot_duration_afterCurrentTime_s/audio_spectrogram_window_s)
         audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
@@ -522,9 +528,10 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
       if file_index == len(filepaths)-1:
         print()
     elif is_coda_annotations(filepath):
-      (coda_start_times_s, click_icis_s, click_times_s, whale_indexes) = \
+      (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes) = \
         get_coda_annotations(filepath, data_dir_root, epoch_offsets_toAdd_s)
       coda_annotations_data['coda_start_times_s'].extend(coda_start_times_s)
+      coda_annotations_data['coda_end_times_s'].extend(coda_end_times_s)
       coda_annotations_data['click_icis_s'].extend(click_icis_s)
       coda_annotations_data['click_times_s'].extend(click_times_s)
       coda_annotations_data['whale_indexes'].extend(whale_indexes)
@@ -1098,7 +1105,7 @@ if use_opencv_subplots:
   # Do the same as above but for drone data visualizations.
   drone_plot_handles = None
   num_drone_datas = len(drone_datas)
-  if num_drone_datas > 0:
+  if num_drone_datas > 0 and 'Drone Positions' in composite_layout:
     # Find the layout for the drone plot.
     drone_data_layout_specs = composite_layout['Drone Positions']
     (row, col, rowspan, colspan) = drone_data_layout_specs
@@ -1201,7 +1208,7 @@ if use_opencv_subplots:
   coda_annotations_plot_handles = None
   coda_annotations_graphics_layout = None
   num_coda_annotations = len(coda_annotations_data['coda_start_times_s'])
-  if num_coda_annotations > 0:
+  if num_coda_annotations > 0 and 'Coda Annotations' in composite_layout:
     # Find the layout for the drone plot.
     coda_annotations_layout_specs = composite_layout['Coda Annotations']
     (row, col, rowspan, colspan) = coda_annotations_layout_specs
