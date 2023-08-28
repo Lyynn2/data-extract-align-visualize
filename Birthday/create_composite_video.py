@@ -931,15 +931,31 @@ if use_opencv_subplots:
       # Update the subplot with the image.
       composite_img = update_subplot(composite_img, layout_specs, [img], subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
     
-    # Otherwise, assume it is the current time for updating a coda annotation plot.
-    elif isinstance(data[0], (float, int)):
-      current_time_s = data[0]
+    elif is_coda_annotations(data[0]):
+      (coda_data, current_time_s) = data
       (codas_graphics_layout, codas_plotWidget, currentTime_marker_handle) = plot_handles
-      currentTime_marker_handle.setData(current_time_s * np.array([1, 1]),
-                                        coda_annotations_plot_yrange)
-      codas_plotWidget.setXRange(current_time_s - coda_annotations_plot_duration_beforeCurrentTime_s,
-                                 current_time_s + coda_annotations_plot_duration_afterCurrentTime_s,
-                                 padding=0)
+      # Plot all codas in the given window.
+      t00 = time.time()
+      codas_plotWidget.clear()
+      for coda_index in range(len(coda_data['click_times_s'])):
+        click_times_s = coda_data['click_times_s'][coda_index]
+        click_icis_s = coda_data['click_icis_s'][coda_index]
+        whale_index = coda_data['whale_indexes'][coda_index]
+        if len(click_icis_s) > 0:
+          click_icis_s = click_icis_s + [click_icis_s[-1]] # the last click will be plotted at a fictitious ICI that copies the previous one
+        else:
+          click_icis_s = [0.0] # plot single clicks at the bottom of the graph
+        symbols = [coda_annotations_plot_get_symbol(whale_index)]*len(click_times_s)
+        symbols[-1] = coda_annotations_plot_get_symbol_endClick(whale_index)
+        whale_pen = whale_pens[unique_whale_indexes.index(whale_index)]
+        whale_color = whale_colors[unique_whale_indexes.index(whale_index)]
+        whale_symbol_pen = whale_symbol_pens[unique_whale_indexes.index(whale_index)]
+        symbol_size = coda_annotations_plot_get_symbol_size(whale_index)
+        coda_annotations_plotWidget.plot(x=click_times_s - current_time_s, # make time relative to current time
+                                         y=np.array(click_icis_s)*1000, # convert to milliseconds
+                                         symbol=symbols,
+                                         symbolSize=symbol_size, pen=whale_pen,
+                                         symbolBrush=whale_color, symbolPen=whale_symbol_pen)
       # Grab the plot as an image.
       img = codas_graphics_layout.grab().toImage()
       img = qimage_to_numpy(img)
@@ -1234,7 +1250,7 @@ if use_opencv_subplots:
     coda_annotations_plotWidget.getAxis('bottom').setTickSpacing(**coda_annotations_plot_tickSpacing_s)
     # Hide the bottom ticks (and the grid) though to be cleaner.
     # Assume x axis will be aligned with ticks of the spectrogram.
-    coda_annotations_plotWidget.hideAxis('bottom')
+    # coda_annotations_plotWidget.hideAxis('bottom')
     # Adjust the width of the grid and box.
     coda_annotations_plotWidget.getAxis('bottom').setPen(width=5)
     coda_annotations_plotWidget.getAxis('left').setPen(width=6)
@@ -1273,7 +1289,7 @@ if use_opencv_subplots:
     #   print('colorbar width:', h_colorbar.width())
     #   coda_annotations_plotWidget.getAxis('left').setWidth(max_leftAxis_width)
     #   coda_annotations_plotWidget.getAxis('right').setWidth(h_colorbar.axis.width())
-      
+
     # Get visibly distinct colors for each whale index.
     whale_indexes_all = coda_annotations_data['whale_indexes']
     unique_whale_indexes = sorted(list(OrderedDict(zip(whale_indexes_all, whale_indexes_all)).keys()))
@@ -1302,28 +1318,8 @@ if use_opencv_subplots:
                          for whale_index in unique_whale_indexes]
     
     # Plot the current-time marker.
-    codas_currentTime_handle = coda_annotations_plotWidget.plot(
-        x=[0, 0], y=coda_annotations_plot_yrange, pen=coda_annotations_plot_currentTime_pen)
-    # Plot all codas.
-    for coda_index in range(num_coda_annotations):
-      whale_index = coda_annotations_data['whale_indexes'][coda_index]
-      click_times_s = coda_annotations_data['click_times_s'][coda_index]
-      click_icis_s = coda_annotations_data['click_icis_s'][coda_index]
-      if len(click_icis_s) > 0:
-        click_icis_s = click_icis_s + [click_icis_s[-1]]
-      else:
-        click_icis_s = [0.0] # plot single clicks at the bottom of the graph
-      coda_start_time_s = coda_annotations_data['coda_start_times_s'][coda_index]
-      symbols = [coda_annotations_plot_get_symbol(whale_index)]*len(click_times_s)
-      symbols[-1] = coda_annotations_plot_get_symbol_endClick(whale_index)
-      whale_pen = whale_pens[unique_whale_indexes.index(whale_index)]
-      whale_color = whale_colors[unique_whale_indexes.index(whale_index)]
-      whale_symbol_pen = whale_symbol_pens[unique_whale_indexes.index(whale_index)]
-      symbol_size = coda_annotations_plot_get_symbol_size(whale_index)
-      coda_annotations_plotWidget.plot(x=click_times_s, y=np.array(click_icis_s)*1000,
-                                       symbol=symbols,
-                                       symbolSize=symbol_size, pen=whale_pen,
-                                       symbolBrush=whale_color, symbolPen=whale_symbol_pen)
+    codas_currentTime_handle = coda_annotations_plotWidget.plot(x=[0, 0], y=coda_annotations_plot_yrange,
+                                                                pen=coda_annotations_plot_currentTime_pen)
     # Set the plot bounds.
     coda_annotations_plotWidget.setXRange(0 - coda_annotations_plot_duration_beforeCurrentTime_s,
                                           0 + coda_annotations_plot_duration_afterCurrentTime_s,
@@ -1331,15 +1327,15 @@ if use_opencv_subplots:
     coda_annotations_plotWidget.setYRange(*coda_annotations_plot_yrange, padding=0)
     # Store the line handles.
     coda_annotations_plot_handles = (coda_annotations_graphics_layout, coda_annotations_plotWidget, codas_currentTime_handle)
-    # Set dummy data as a time that will not exist.
-    coda_annotations_dummy_data = 0
+    # Set dummy data as not having any codas (dict of empty lists) at an epoch time that won't exist (0).
+    coda_annotations_dummy_data = (dict([(key, []) for key in coda_annotations_data]), 0)
     # Update the example composite image.
-    update_subplot(composite_img_dummy, coda_annotations_layout_specs, [coda_annotations_dummy_data],
+    update_subplot(composite_img_dummy, coda_annotations_layout_specs, coda_annotations_dummy_data,
                    subplot_label=None,
                    subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
                    plot_handles=coda_annotations_plot_handles)
     # Store the dummy data.
-    dummy_datas[str(coda_annotations_layout_specs)] = [coda_annotations_dummy_data]
+    dummy_datas[str(coda_annotations_layout_specs)] = coda_annotations_dummy_data
     # Show the window if desired.
     QtCore.QCoreApplication.processEvents()
     if show_visualization_window:
@@ -1561,15 +1557,32 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         duration_s_updatePlots_total += time.time() - t0
     # Check if this is a coda-annotations layout, and if so update the plot.
     if device_id == '_coda_annotations':
-      t0 = time.time()
-      update_subplot(composite_img_current, layout_specs, [current_time_s],
-                     subplot_label=None,
-                     subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
-                     plot_handles=coda_annotations_plot_handles)
-      layouts_updated[str(layout_specs)] = True
-      layouts_showing_dummyData[str(layout_specs)] = False
-      layouts_prevState[str(layout_specs)] = (current_time_s)
-      duration_s_updatePlots_total += time.time() - t0
+      # Find codas within the current plot window.
+      plot_start_time_s = current_time_s - coda_annotations_plot_duration_beforeCurrentTime_s
+      plot_end_time_s = current_time_s + coda_annotations_plot_duration_afterCurrentTime_s
+      coda_data_toPlot = dict([(key, []) for key in coda_annotations_data])
+      for coda_index in range(num_coda_annotations):
+        coda_start_time_s = coda_annotations_data['coda_start_times_s'][coda_index]
+        coda_end_time_s = coda_annotations_data['coda_end_times_s'][coda_index]
+        click_times_s = coda_annotations_data['click_times_s'][coda_index]
+        if (coda_start_time_s >= plot_start_time_s and coda_start_time_s <= plot_end_time_s) \
+          or (coda_end_time_s >= plot_start_time_s and coda_end_time_s <= plot_end_time_s):
+            for key in coda_annotations_data:
+              coda_data_toPlot[key].append(coda_annotations_data[key][coda_index])
+      # Only spend time updating the plot if it changed since last frame.
+      if coda_data_toPlot == layouts_prevState[str(layout_specs)]:
+        layouts_updated[str(layout_specs)] = True
+        layouts_showing_dummyData[str(layout_specs)] = False
+      else:
+        t0 = time.time()
+        update_subplot(composite_img_current, layout_specs, (coda_data_toPlot, current_time_s),
+                       subplot_label=None,
+                       subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
+                       plot_handles=coda_annotations_plot_handles)
+        layouts_updated[str(layout_specs)] = True
+        layouts_showing_dummyData[str(layout_specs)] = False
+        layouts_prevState[str(layout_specs)] = (coda_data_toPlot, current_time_s)
+        duration_s_updatePlots_total += time.time() - t0
 
   # If a layout was not updated, show its dummy data.
   # But only spend time updating it if it isn't already showing dummy data.
@@ -1585,6 +1598,11 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
                          subplot_label=None,
                          plot_handles=audio_plot_handles[str(layout_specs)])
           duration_s_updatePlots_audio += time.time() - t0
+        elif is_coda_annotations(dummy_datas[str(layout_specs)][0]):
+          update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
+                         subplot_label=None,
+                         subplot_horizontal_alignment=coda_annotations_plot_horizontal_alignment,
+                         plot_handles=coda_annotations_plot_handles)
         else:
           update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
                          subplot_label=None)
