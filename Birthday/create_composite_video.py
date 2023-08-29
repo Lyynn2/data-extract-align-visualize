@@ -60,10 +60,23 @@ localtime_offset_str = '-0400'
 
 # Specify offsets to add to timestamps extracted from filenames.
 epoch_offsets_toAdd_s = {
-  'CETI-DJI_MAVIC3-1'          : 0.79859,
-  'DSWP-DJI_MAVIC3-2'          : 2.10833,
+  # 'CETI-DJI_MAVIC3-1'          : 0.79859,
+  # 'DSWP-DJI_MAVIC3-2'          : 2.10833,
+  'CETI-DJI_MAVIC3-1'          : OrderedDict([(1688829599.0, 0.79859), # (started-before-this-device-time, offset)
+                                              (1688833020.0, 0.79859),
+                                              (1688836800.0, 0.79859),
+                                              (1688838240.0, 0.79859),
+                                              (1688839260.0, 0.434701),
+                                              (-1,           0.434701)]),
+  'DSWP-DJI_MAVIC3-2'          : OrderedDict([(1688829599.0, 6.097219), # (started-before-this-device-time, offset)
+                                              (1688833020.0, 2.10833),
+                                              (1688836800.0, 6.297219),
+                                              (1688838240.0, 6.499997),
+                                              (1688839260.0, 6.499997),
+                                              (-1,           2.299997)]),
   'DG-CANON_EOS_1DX_MARK_III-1': 14603.81506,
-  'JD-CANON_REBEL_T5I'         : 14.37973,
+  'JD-CANON_REBEL_T5I'         : OrderedDict([(1688831658, 14.37973), # (started-before-this-device-time, offset)
+                                              (-1,         15.244)]),
   'DSWP-CANON_EOS_70D-1'       : 14486.21306,
   'DSWP-KASHMIR_MIXPRE6-1'     : 32.7085,
   'Misc/Aluma'                 : -0.55946,
@@ -272,11 +285,13 @@ if use_pyqtgraph_subplots:
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
 output_video_filepath = os.path.join(data_dir_root,
-                                     'composite_video_fps%d_duration%d_start%d_colWidth%d_audio%d%s.mp4'
+                                     'composite_video_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
                                      % (output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
                                         composite_layout_column_width,
-                                        audio_resample_rate_hz, 'spectrogram' if audio_plot_spectrogram else 'waveform'))
+                                        audio_resample_rate_hz, 'spectrogram' if audio_plot_spectrogram else 'waveform',
+                                        ''.join(['_codasICI' if 'Codas (ICI)' in list(composite_layout.keys()) else '',
+                                                 '_codasTFS' if 'Codas (TFS)' in list(composite_layout.keys()) else ''])))
 
 
 ######################################################
@@ -292,6 +307,18 @@ def device_friendlyName_to_id(device_friendlyName_toFind):
       return device_id
   return None
 
+# Find the desired epoch offset for a given device at a given start time.
+def adjust_start_time_s(media_start_time_s, device_id):
+  if isinstance(epoch_offsets_toAdd_s[device_id], dict):
+    cutoff_times = list(epoch_offsets_toAdd_s[device_id].keys())
+    epoch_offsets_toAdd_s_forDevice = list(epoch_offsets_toAdd_s[device_id].values())
+    if cutoff_times[-1] == -1:
+      cutoff_times[-1] = 9e9
+    cutoff_index = np.searchsorted(cutoff_times, media_start_time_s)
+    return media_start_time_s + epoch_offsets_toAdd_s_forDevice[cutoff_index]
+  else:
+    return media_start_time_s + epoch_offsets_toAdd_s[device_id]
+  
 # Find a timestamp from a device that most closely matches a target timestamp.
 # Will return the index of that matched timestamp within the device's array of timestamps.
 # If there is no such timestamp within a specified threshold of the target, return None.
@@ -418,7 +445,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
       filename = os.path.basename(filepath)
       start_time_ms = int(re.search('\d{13}', filename)[0])
       start_time_s = start_time_ms/1000.0
-      start_time_s += epoch_offsets_toAdd_s[device_id]
+      start_time_s = adjust_start_time_s(start_time_s, device_id)
       if start_time_s <= (output_video_start_time_s+output_video_duration_s):
         filepaths_toKeep.append(filepath)
   else:
@@ -433,7 +460,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
     if 'coda_annotations' not in device_id:
       start_time_ms = int(re.search('\d{13}', filename)[0])
       start_time_s = start_time_ms/1000.0
-      start_time_s += epoch_offsets_toAdd_s[device_id]
+      start_time_s = adjust_start_time_s(start_time_s, device_id)
     else:
       start_time_s = None
     # Process the data/timestamps.
@@ -445,9 +472,13 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
       drone_data = get_drone_data(filepath, timezone_offset_str=localtime_offset_str)
       if drone_data is not None:
         timestamps_s = drone_data['timestamp_s']
-        timestamps_s = timestamps_s + epoch_offsets_toAdd_s[device_id]
+        # Adjust for time zone offset explicitly, since the file epochs correct for it
+        #  but the SRT data would not.  So this will get us to the filename reference,
+        #  and allow the manually specified offsets to apply.
         if not drone_timestamps_are_local_time[device_id]:
           timestamps_s = timestamps_s + localtime_offset_s
+        start_timestamp_s = adjust_start_time_s(timestamps_s[0], device_id)
+        timestamps_s = timestamps_s + (start_timestamp_s - timestamps_s[0])
         drone_datas.setdefault(device_id, {})
         drone_datas[device_id][filepath] = (timestamps_s, drone_data)
       else:
@@ -537,7 +568,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
         print()
     elif is_coda_annotations(filepath):
       (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes) = \
-        get_coda_annotations(filepath, data_dir_root, epoch_offsets_toAdd_s)
+        get_coda_annotations(filepath, data_dir_root, adjust_start_time_s)
       codas_data['coda_start_times_s'].extend(coda_start_times_s)
       codas_data['coda_end_times_s'].extend(coda_end_times_s)
       codas_data['click_icis_s'].extend(click_icis_s)
@@ -1420,18 +1451,22 @@ duration_s_writeFrame = 0
 composite_video_writer = None
 if use_opencv_subplots:
   composite_img_current = composite_img_blank.copy()
-last_status_time_s = 0
 layouts_updated = {}
 layouts_showing_dummyData = dict([(str(layout_specs), False) for layout_specs in composite_layout.values()])
 layouts_prevState = dict([(str(layout_specs), None) for layout_specs in composite_layout.values()])
+last_status_time_s = time.time()
+last_status_frame_index = 0
 start_loop_time_s = time.time()
 for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Print periodic status updates.
   if time.time() - last_status_time_s > 10:
-    print(' Processing frame %6d/%6d (%0.2f%%) for time %14.3f (%s)' %
+    print(' Processing frame %6d/%6d (%0.2f%%) for time %14.3f (%s) | FPS %0.1f Avg %0.1f' %
           (frame_index+1, output_video_num_frames, 100*(frame_index+1)/output_video_num_frames,
-           current_time_s, time_s_to_str(current_time_s, localtime_offset_s, localtime_offset_str)))
+           current_time_s, time_s_to_str(current_time_s, localtime_offset_s, localtime_offset_str),
+           (frame_index - last_status_frame_index)/(time.time() - last_status_time_s),
+           frame_index/(time.time() - start_loop_time_s)))
     last_status_time_s = time.time()
+    last_status_frame_index = frame_index
 
   # Mark that no subplot layouts have been updated.
   for (device_friendlyName, layout_specs) in composite_layout.items():
@@ -1776,7 +1811,7 @@ for output_video_filepath_toAddAudio in output_video_filepaths_toAddAudio:
       audio_filename = os.path.basename(filepath)
       audio_start_time_ms = int(re.search('\d{13}', audio_filename)[0])
       audio_start_time_s = audio_start_time_ms/1000.0
-      audio_start_time_s += epoch_offsets_toAdd_s[device_id]
+      audio_start_time_s = adjust_start_time_s(audio_start_time_s, device_id)
       (audio_rate, audio_data) = wavfile.read(filepath)
       audio_duration_s = audio_data.shape[0]/audio_rate
       audio_end_time_s = audio_start_time_s + audio_duration_s

@@ -333,7 +333,7 @@ def get_drone_data(video_filepath, timezone_offset_str=''):
 # CODA ANNOTATIONS
 ############################################
 
-def get_coda_annotations(annotation_filepath, data_root_dir, epoch_offsets_toAdd_s):
+def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s_fn):
   # Read the CSV data.
   annotations_file = open(annotation_filepath, 'r')
   csv_reader = csv.reader(annotations_file)
@@ -369,7 +369,7 @@ def get_coda_annotations(annotation_filepath, data_root_dir, epoch_offsets_toAdd
       filename = os.path.basename(audio_filepath)
       start_time_ms = int(re.search('\d{13}', filename)[0])
       start_time_s = start_time_ms/1000.0
-      start_time_s += epoch_offsets_toAdd_s[device_id]
+      start_time_s = adjust_start_time_s_fn(start_time_s, device_id)
       # Store the result to reduce overhead next coda row.
       audio_file_start_times_s[audio_file_keyword] = start_time_s
     audio_file_start_time_s = audio_file_start_times_s[audio_file_keyword]
