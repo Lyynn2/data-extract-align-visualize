@@ -15,6 +15,7 @@ import proglog
 
 import cv2
 import decord
+from ThreadedVideoWriter import ThreadedVideoWriter
 
 from ImagePlot import ImagePlot
 import pyqtgraph
@@ -39,16 +40,16 @@ data_dir_root = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
 composite_layout = OrderedDict([
   ('Mavic (CETI)'         , (0, 0, 2, 2)),
   ('Mavic (DSWP)'         , (0, 2, 2, 2)),
-  ('Canon (Gruber)'       , (2, 0, 1, 1)),
-  ('Canon (DelPreto)'     , (2, 1, 1, 1)),
-  ('Phone (DelPreto)'     , (2, 1, 1, 1)),
-  ('GoPro (DelPreto)'     , (2, 1, 1, 1)),
-  ('Canon (DSWP)'         , (2, 2, 1, 1)),
-  ('Drone Positions'      , (2, 3, 1, 1)),
-  ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
-  ('Phone (Pagani)'       , (3, 1, 1, 1)),
-  ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
-  ('Phone (Aluma)'        , (3, 3, 1, 1)),
+  # ('Canon (Gruber)'       , (2, 0, 1, 1)),
+  # ('Canon (DelPreto)'     , (2, 1, 1, 1)),
+  # ('Phone (DelPreto)'     , (2, 1, 1, 1)),
+  # ('GoPro (DelPreto)'     , (2, 1, 1, 1)),
+  # ('Canon (DSWP)'         , (2, 2, 1, 1)),
+  # ('Drone Positions'      , (2, 3, 1, 1)),
+  # ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
+  # ('Phone (Pagani)'       , (3, 1, 1, 1)),
+  # ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
+  # ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
   ('Codas (ICI)',           (5, 0, 1, 4)),
   ('Codas (TFS)',           (6, 0, 1, 4)),
@@ -150,13 +151,13 @@ device_friendlyNames = {
 # output_video_start_time_str = '2023-07-08 10:20:13 -0400'
 # output_video_duration_s = 19579
 
-# # Hydrophone file 280:
-# output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
-# output_video_duration_s = 184.32
+# Hydrophone file 280:
+output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
+output_video_duration_s = 184.32
 
-# Testing for hydrophone file 280:
-output_video_start_time_str = '2023-07-08 11:55:10 -0400'
-output_video_duration_s = 10
+# # Testing for hydrophone file 280:
+# output_video_start_time_str = '2023-07-08 11:55:10 -0400'
+# output_video_duration_s = 10
 
 # Define frame rate of output video
 output_video_fps = 25
@@ -1402,8 +1403,13 @@ duration_s_audioParsing = 0
 duration_s_exportFrame = 0
 duration_s_writeFrame = 0
 
+# Create a video writer that will use threading to reduce overhead.
+composite_video_writer = ThreadedVideoWriter(
+                            output_filepath=output_video_filepath,
+                            frame_rate=output_video_fps, max_buffered_frames=100,
+                            overwrite_existing_video=True)
+
 # Generate a frame for every desired timestamp.
-composite_video_writer = None
 if use_opencv_subplots:
   composite_img_current = composite_img_blank.copy()
 layouts_updated = {}
@@ -1680,26 +1686,27 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Write the frame to the output video.
   if output_video_filepath is not None:
     t0 = time.time()
-    # Create the video writer if this is the first frame, since we now know the frame dimensions.
-    if composite_video_writer is None:
-      # v_wrt_str = f"appsrc ! video/x-raw, format=BGR ! queue " \
-      #             f"! nvvidconv ! omxh264enc " \
-      #             f"! h264parse " \
-      #             f"! qtmux " \
-      #             f"! filesink location=test.mp4"
-      # v_wrt_str = f"appsrc ! video/x-raw, format=BGR ! queue " \
-      #             f"! videoconvert ! video/x-raw,format=BGRx " \
-      #             f"! nvvidconv ! video/x-raw(memory:NVMM),format=NV12 " \
-      #             f"! nvv4l2h264enc " \
-      #             f"! h264parse " \
-      #             f"! qtmux " \
-      #             f"! filesink location={output_video_filepath}"
-      # composite_video_writer = cv2.VideoWriter(v_wrt_str, cv2.CAP_GSTREAMER,
-      #                                          0, output_video_fps, [exported_img.shape[1], exported_img.shape[0]])
-      composite_video_writer = cv2.VideoWriter(output_video_filepath,
-                                               cv2.VideoWriter_fourcc(*'MJPG') if '.avi' in output_video_filepath.lower() else cv2.VideoWriter_fourcc(*'MP4V'),
-                                               output_video_fps, [exported_img.shape[1], exported_img.shape[0]])
-    composite_video_writer.write(exported_img)
+    # # Create the video writer if this is the first frame, since we now know the frame dimensions.
+    # if composite_video_writer is None:
+    #   # v_wrt_str = f"appsrc ! video/x-raw, format=BGR ! queue " \
+    #   #             f"! nvvidconv ! omxh264enc " \
+    #   #             f"! h264parse " \
+    #   #             f"! qtmux " \
+    #   #             f"! filesink location=test.mp4"
+    #   # v_wrt_str = f"appsrc ! video/x-raw, format=BGR ! queue " \
+    #   #             f"! videoconvert ! video/x-raw,format=BGRx " \
+    #   #             f"! nvvidconv ! video/x-raw(memory:NVMM),format=NV12 " \
+    #   #             f"! nvv4l2h264enc " \
+    #   #             f"! h264parse " \
+    #   #             f"! qtmux " \
+    #   #             f"! filesink location={output_video_filepath}"
+    #   # composite_video_writer = cv2.VideoWriter(v_wrt_str, cv2.CAP_GSTREAMER,
+    #   #                                          0, output_video_fps, [exported_img.shape[1], exported_img.shape[0]])
+    #   composite_video_writer = cv2.VideoWriter(output_video_filepath,
+    #                                            cv2.VideoWriter_fourcc(*'MJPG') if '.avi' in output_video_filepath.lower() else cv2.VideoWriter_fourcc(*'MP4V'),
+    #                                            output_video_fps, [exported_img.shape[1], exported_img.shape[0]])
+    # composite_video_writer.write(exported_img)
+    composite_video_writer.add_frame(exported_img)
     duration_s_writeFrame += time.time() - t0
 
 # All done!
