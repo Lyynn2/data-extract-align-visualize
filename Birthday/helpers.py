@@ -99,7 +99,7 @@ def load_image(filepath, target_width=None, target_height=None, method='pil'):
 
 # Open a video file.
 # target_width is only used for the 'decord' method
-def get_video_reader(filepath, target_width=None, method='decord'):
+def get_video_reader(filepath, target_width=None, target_height=None, method='decord'):
   video_reader = None
   frame_rate = None
   num_frames = None
@@ -109,10 +109,10 @@ def get_video_reader(filepath, target_width=None, method='decord'):
     num_frames = int(video_reader.get(cv2.CAP_PROP_FRAME_COUNT))
   elif method.lower() == 'decord':
     video_reader = decord.VideoReader(filepath)
-    if target_width is not None:
-      frame_shape = video_reader[0].asnumpy().shape
-      target_height = int(frame_shape[0]/frame_shape[1]*target_width)
-      video_reader = decord.VideoReader(filepath, width=target_width, height=target_height)
+    if target_width is not None or target_height is not None:
+      img = video_reader[0].asnumpy()
+      img = scale_image(img, target_width, target_height)
+      video_reader = decord.VideoReader(filepath, width=img.shape[1], height=img.shape[0])
     frame_rate = video_reader.get_avg_fps()
     num_frames = len(video_reader)
   return (video_reader, frame_rate, num_frames)
@@ -121,7 +121,7 @@ def get_video_reader(filepath, target_width=None, method='decord'):
 def load_frame(video_reader, frame_index, target_width=None, target_height=None, method='decord'):
   success = False
   img = None
-  if method.lower() == 'opencv':
+  if method.lower() ==   'opencv':
     video_reader.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
     success, img = video_reader.read()
     if success and (target_width is not None and target_height is not None):
@@ -153,45 +153,92 @@ def qimage_to_numpy(qimg):
   return arr
 
 # Scale an image to fit within a target width and height.
-# Will maintain the aspect ratio of the input image.
 # The input can be a PyQtGraph QPixmap or a numpy array.
-def scale_image(img, target_width, target_height):
+import time
+duration_s_scaleImage = 0
+def get_duration_s_scaleImage():
+  global duration_s_scaleImage
+  return duration_s_scaleImage
+def scale_image(img, target_width, target_height, maintain_aspect_ratio=True):
+  global duration_s_scaleImage
+  t0 = time.time()
   if isinstance(img, np.ndarray):
     img_width = img.shape[1]
     img_height = img.shape[0]
-    if img_width == target_width and img_height == target_height:
+    if not maintain_aspect_ratio and \
+        ((target_width is None or img_width == target_width) and (target_height is None or img_height == target_height)):
+      duration_s_scaleImage += time.time() - t0
       return img
-    scale_factor_byWidth = target_width/img_width
-    scale_factor_byHeight = target_height/img_height
-    scale_factor = min(scale_factor_byWidth, scale_factor_byHeight)
-    return cv2.resize(src=img, dsize=(0,0), fx=scale_factor, fy=scale_factor)
+    if maintain_aspect_ratio and \
+        (((target_width is None or img_width == target_width) and (target_height is None or img_height <= target_height))
+         or (((target_width is None or img_width <= target_width) and (target_height is None or img_height == target_height)))):
+      duration_s_scaleImage += time.time() - t0
+      return img
+    scale_factor_byWidth = target_width/img_width if target_width is not None else None
+    scale_factor_byHeight = target_height/img_height if target_height is not None else None
+    if maintain_aspect_ratio:
+      scale_factor = 1
+      if scale_factor_byWidth is not None and scale_factor_byHeight is not None:
+        scale_factor = min(scale_factor_byWidth, scale_factor_byHeight)
+      elif scale_factor_byWidth is not None:
+        scale_factor = scale_factor_byWidth
+      elif scale_factor_byHeight is not None:
+        scale_factor = scale_factor_byHeight
+      if scale_factor != 1:
+        res = cv2.resize(src=img, dsize=(0,0), fx=scale_factor, fy=scale_factor)
+      else:
+        res = img
+      duration_s_scaleImage += time.time() - t0
+      return res
+    else:
+      res = cv2.resize(src=img, dsize=(0,0), fx=scale_factor_byWidth, fy=scale_factor_byHeight)
+      duration_s_scaleImage += time.time() - t0
+      return res
   if isinstance(img, QPixmap):
-    return img.scaled(target_width, target_height,
-                      aspectRatioMode=pyqtgraph.QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+    if maintain_aspect_ratio:
+      res = img.scaled(target_width, target_height,
+                       aspectRatioMode=pyqtgraph.QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+      duration_s_scaleImage += time.time() - t0
+      return res
+    else:
+      res = img.scaled(target_width, target_height,
+                       aspectRatioMode=pyqtgraph.QtCore.Qt.AspectRatioMode.IgnoreAspectRatio)
+      duration_s_scaleImage += time.time() - t0
+      return res
 
 # Draw text on an image, with a shaded background.
 # If the y position is -1, will place the text at the bottom of the image.
 # If the x position is -1, will place the text at the left of the image.
 # If x or y is between 0 and 1, will place at that ratio of the width or height.
+import time
+duration_s_drawText = 0
+def get_duration_s_drawText():
+  global duration_s_drawText
+  return duration_s_drawText
 def draw_text_on_image(img, text, pos=(0, 0),
                        font_scale=8, text_width_ratio=None,
                        font_thickness=1, font=cv2.FONT_HERSHEY_DUPLEX,
-                       text_color=None, text_bg_color=None, text_bg_outline_color=None,
+                       text_color=None, text_bg_color=None, text_bg_outline_color=None, text_bg_pad_width_ratio=0.03,
                        preview_only=False,
                        ):
+  global duration_s_drawText
+  t0 = time.time()
   # If desired, compute a font scale based on the target width ratio.
   if text_width_ratio is not None:
-    target_text_w = text_width_ratio * img.shape[1]
-    font_scale = 0
-    text_w = 0
-    while text_w < target_text_w:
-      font_scale += 0.2
-      (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
-    font_scale -= 0.2
+    if len(text) > 0:
+      target_text_w = text_width_ratio * img.shape[1]
+      font_scale = 0
+      text_w = 0
+      while text_w < target_text_w:
+        font_scale += 0.2
+        (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+      font_scale -= 0.2
+    else:
+      font_scale = 1
   # Compute the text dimensions.
   (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
   # Compute padding.
-  text_bg_pad = round(text_w*0.03)
+  text_bg_pad = round(text_w*text_bg_pad_width_ratio)
   text_bg_outline_width = round(text_w*0.02) if text_bg_outline_color is not None else 0
   # Place the text at the bottom and/or left if desired, and handle fractional placement if desired.
   pos = list(pos)
@@ -225,7 +272,8 @@ def draw_text_on_image(img, text, pos=(0, 0),
     cv2.putText(img, text, (x, int(y + text_h + font_scale - 1)),
                 font, font_scale, text_color, font_thickness)
   
-  return (text_w, text_h)
+  duration_s_drawText += time.time() - t0
+  return (text_w, text_h, font_scale)
 
 # Compress a video to the target bitrate.
 # The target bitrate in bits per second will include both video and audio.
@@ -391,4 +439,18 @@ def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s
 
   
   
+############################################
+# Various
+############################################
+
+def next_multiple(value, multiple_of):
+  if int(value/multiple_of) == value/multiple_of:
+    return value
+  return (np.floor(value/multiple_of) + 1)*multiple_of
+def previous_multiple(value, multiple_of):
+  if int(value/multiple_of) == value/multiple_of:
+    return value
+  return np.floor(value/multiple_of)*multiple_of
+
+
 

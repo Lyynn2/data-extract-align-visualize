@@ -50,7 +50,7 @@ codas_graphics_layout.setGeometry(50, 50, 1000, 1000//2.5)
 codas_grid_layout.setRowMinimumHeight(0, 1000//2.5)
 codas_yrange = [0, 600]
 codas_currentTime_handle = codas_plotWidget.plot(x=[5, 5], y=codas_yrange, pen=pyqtgraph.mkPen([200, 200, 200], width=7))
-for coda_row in csv_rows[1:]:
+for (coda_index, coda_row) in enumerate(csv_rows[1:]):
   coda_start_time_s = float(coda_row[tfs_columnIndex])
   click_icis_s = [float(ici) for ici in itemgetter(*ici_columnIndexes)(coda_row)]
   click_icis_s = [ici for ici in click_icis_s if ici > 0]
@@ -107,8 +107,72 @@ for t in np.arange(start=10, stop=20, step=0.1):
   img = np.array(img[:,:,0:3])
   # cv2.imshow('grab', img)
   # cv2.waitKey(1)
-  
+
   n+=1
 print(n/(time.time() - t0))
-  
+
 # app.exec()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import matplotlib
+import matplotlib.pyplot as plt
+
+matplotlib.use("Agg")
+matplotlib.style.use('fast')
+plt.ioff()
+
+dpi = 300
+fig, axs = plt.subplots(nrows=1, ncols=1,
+                        squeeze=False, # if False, always return 2D array of axes
+                        subplot_kw={'frame_on': True},
+                        figsize=(1000/dpi, 1000/2.5/dpi),
+                        dpi=dpi
+                        )
+axis = axs[0][0]
+plt.sca(axis)
+for (coda_index, coda_row) in enumerate(csv_rows[1:]):
+  coda_start_time_s = float(coda_row[tfs_columnIndex])
+  click_icis_s = [float(ici) for ici in itemgetter(*ici_columnIndexes)(coda_row)]
+  click_icis_s = [ici for ici in click_icis_s if ici > 0]
+  coda_click_times_s = np.cumsum([0.0] + click_icis_s)
+  click_times_s = coda_start_time_s + coda_click_times_s
+  whale_index = int(coda_row[whale_columnIndex])
+  whale_pen = whale_pens[unique_whale_indexes.index(whale_index)]
+  whale_color = whale_colors[unique_whale_indexes.index(whale_index)]
+  if len(click_icis_s) > 0:
+    click_icis_s = click_icis_s + [click_icis_s[-1]]
+  if len(click_icis_s) == 0:
+    click_icis_s = [0]
+  click_icis_s = np.array(click_icis_s)
+  symbols = ['d' if whale_index >= 20 else 'o']*len(click_times_s)
+  symbols[-1] = 't' if whale_index >= 20 else 's'
+  axis.plot(click_times_s, click_icis_s*1000, '.-')
+plt.grid(True, color='lightgray')
+#plt.show()
+
+t0 = time.time()
+n = 0
+for t in np.arange(start=10, stop=20, step=0.1):
+  plt.xlim([t, t+15])
+  fig.canvas.draw()
+  fig.canvas.flush_events()
+  img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+  img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+  # cv2.imshow('grab', img)
+  # cv2.waitKey(1)
+  n+=1
+print(n/(time.time() - t0))
