@@ -184,9 +184,9 @@ output_video_duration_s = 19579
 # output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
 # output_video_duration_s = 184.32
 #
-# # Testing for hydrophone file 280:
-# output_video_start_time_str = '2023-07-08 11:55:10 -0400'
-# output_video_duration_s = 60
+# Testing for hydrophone file 280:
+output_video_start_time_str = '2023-07-08 11:55:10 -0400'
+output_video_duration_s = 60
 
 # Define the frame rate of the output video.
 output_video_fps = 25
@@ -208,7 +208,7 @@ save_audio_track_as_separate_file = True
 output_audio_track_volume_gain_factor = 50 # 1 to not change the volume
 add_audio_track_to_output_video_original = True   # Add audio to the raw output video.
 add_audio_track_to_output_video_compressed = True # Add audio to a version that was explicitly compressed via output_video_compressed_rate_MB_s
-delete_output_video_withoutAudio = False # Delete the raw output video without audio, which may be quite large
+delete_output_video_withoutAudio = True # Delete the raw output video without audio, which may be quite large
 
 # Configure device and timestamp labels on the output video.
 output_video_banner_height_fraction = 0.04 # fraction of the final composite frame height
@@ -292,7 +292,7 @@ drone_lat_to_km = lambda lat:  (lat - drone_plot_reference_location_lonLat[1])*c
 drone_lon_to_km = lambda lon: -(lon - drone_plot_reference_location_lonLat[0])*conversion_factor_lon_to_km
 drone_plot_rangeRatio_bounds = [1, 3] # min/max ratio that the plot range can be, relative to the distance between the drones, before starting to zoom in/out
 drone_plot_minRange_km = 250/1000 # minimum range of x or y axis; but if drones are far from each other, range can dynamically expand
-drone_plot_rangePad_km = 50/1000  # minimum distance from a drone to the edge of the plot
+drone_plot_rangePad_km = 75/1000  # minimum distance from a drone to the edge of the plot
 drone_plot_tickSpacing_km = {'minor':25/1000, 'major':100/1000}
 drone_plot_colors = [(210, 0, 210), (0, 190, 190)] # RGB for each drone; used for position plot and for outline on video labels
 drone_plot_marker_edge_thickness = 5 # outline of markers that will indicate which drone it is
@@ -358,7 +358,7 @@ output_video_banner_font = cv2.FONT_HERSHEY_SIMPLEX
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
 output_video_filepath = os.path.join(data_dir_root,
-                                     'composite_video_UPDATED_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
+                                     'composite_video_TEST2_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
                                      % (output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
                                         composite_layout_column_width,
@@ -1000,14 +1000,20 @@ def update_drone_subplot(composite_img, layout_specs, data,
     y_limits = drone_imagePlot.get_y_limits()
     x_range = drone_imagePlot.get_x_range()
     y_range = drone_imagePlot.get_y_range()
-    existing_range_good = (x_range >= drone_plot_rangeRatio_bounds[0]*max_distance_km
-                            or y_range >= drone_plot_rangeRatio_bounds[0]*max_distance_km) \
-                          and (x_range <= drone_plot_rangeRatio_bounds[1]*max_distance_km
-                            or y_range <= drone_plot_rangeRatio_bounds[1]*max_distance_km) \
-                          and x_extremes[0] >= x_limits[0] + drone_plot_rangePad_km \
+    existing_range_good =     x_extremes[0] >= x_limits[0] + drone_plot_rangePad_km \
                           and x_extremes[1] <= x_limits[1] - drone_plot_rangePad_km \
                           and y_extremes[0] >= y_limits[0] + drone_plot_rangePad_km \
                           and y_extremes[1] <= y_limits[1] - drone_plot_rangePad_km
+    if max_distance_km > 0:
+      existing_range_good = existing_range_good \
+                            and (x_range >= drone_plot_rangeRatio_bounds[0]*max_distance_km
+                              or y_range >= drone_plot_rangeRatio_bounds[0]*max_distance_km) \
+                            and (x_range <= drone_plot_rangeRatio_bounds[1]*max_distance_km
+                              or y_range <= drone_plot_rangeRatio_bounds[1]*max_distance_km)
+    else:
+      existing_range_good = existing_range_good \
+                            and (x_range >= drone_plot_minRange_km
+                              or y_range >= drone_plot_minRange_km)
     if not existing_range_good:
       # Compute a plot range using the distance between drones as a reference length.
       plot_range = max(drone_plot_minRange_km, np.mean(drone_plot_rangeRatio_bounds)*max_distance_km)
@@ -1407,8 +1413,11 @@ readImages_count = 0
 readVideos_count = 0
 duration_s_audioParsing = 0
 duration_s_codasParsing = 0
+duration_s_addTimestampBanner = 0
 duration_s_exportFrame = 0
 duration_s_writeFrame = 0
+duration_s_writeFlush = 0
+duration_s_getBlankFrame = 0
 
 # Will use a buffer of frames to reduce overhead.
 # The ThreadedVideoWriter class will add a new frame to the buffer and then write it to video in the background.
@@ -1461,8 +1470,10 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
     time.sleep(0.001)
   duration_s_writeFrame += time.time() - t0
   # Create a blank frame.
+  t0 = time.time()
   composite_img_buffer[composite_img_buffer_index] = get_composite_img_blank()
   composite_img_current = composite_img_buffer[composite_img_buffer_index]
+  duration_s_getBlankFrame += time.time() - t0
   
   # Loop through each specified device stream.
   # Note that multiple devices may be mapped to the same layout position;
@@ -1492,7 +1503,8 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
                                  subplot_label=device_friendlyName,
                                  subplot_label_outline_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None,
                                  subplot_horizontal_alignment='center')
-            duration_s_updateSubplots_videos +=time.time()-t0
+            duration_s_updateSubplots_videos += time.time() - t0
+            duration_s_updateSubplots_total += time.time() - t0
             break # don't check any more media for this device
           # Read the video frame at the desired index.
           t0 = time.time()
@@ -1508,8 +1520,8 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
                                  subplot_horizontal_alignment='center')
             layouts_prevState[layout_specs] = (filepath, data_index)
             layouts_prevImages[layout_specs] = img
-            duration_s_updateSubplots_total += time.time()-t0
-            duration_s_updateSubplots_videos +=time.time()-t0
+            duration_s_updateSubplots_total += time.time() - t0
+            duration_s_updateSubplots_videos += time.time() - t0
             break # don't check any more media for this device
       
       # Handle images.
@@ -1521,11 +1533,13 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         if data_index is not None:
           # Only spend time loading the image if it would be a different one than last frame.
           if (filepath, data_index) == layouts_prevState[layout_specs]:
+            t0 = time.time()
             update_image_subplot(composite_img_current, layout_specs, layouts_prevImages[layout_specs],
                                  subplot_label=device_friendlyName,
                                  subplot_label_outline_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None,
                                  subplot_horizontal_alignment='center')
             duration_s_updateSubplots_images += time.time() - t0
+            duration_s_updateSubplots_total += time.time() - t0
             break # don't check any more media for this device
           # Read the desired photo.
           t0 = time.time()
@@ -1553,10 +1567,12 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         if data_index is not None:
           # Only spend time loading data if it would be different than last frame.
           if (filepath, data_index) == layouts_prevState[layout_specs]:
+            t0 = time.time()
             update_audio_subplot(composite_img_current, layout_specs, layouts_prevImages[layout_specs],
                                  imagePlots[layout_specs],
                                  subplot_horizontal_alignment='center')
             duration_s_updateSubplots_audio += time.time() - t0
+            duration_s_updateSubplots_total += time.time() - t0
             break # don't check any more media for this device
           t0 = time.time()
           # Get the start/end indexes of the data to plot.
@@ -1599,8 +1615,6 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Update drone data visualizations.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     device_id = device_friendlyName_to_id(device_friendlyName)
-    (row, col, rowspan, colspan) = layout_specs
-    (subplot_width, subplot_height) = get_subplot_size(layout_specs)
     if device_id != 'Drone_Positions':
       continue
     drone_data_toPlot = [None]*len(drone_datas)
@@ -1629,14 +1643,12 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
                            subplot_horizontal_alignment='center')
       layouts_prevState[layout_specs] = layout_curState
       layouts_prevImages[layout_specs] = imagePlots[layout_specs].get_plot_image()
-      duration_s_updateSubplots_total += time.time() - t0
       duration_s_updateSubplots_drones += time.time() - t0
+      duration_s_updateSubplots_total += time.time() - t0
   
   # Update coda visualizations.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     device_id = device_friendlyName_to_id(device_friendlyName)
-    (row, col, rowspan, colspan) = layout_specs
-    (subplot_width, subplot_height) = get_subplot_size(layout_specs)
     if device_id != '_coda_annotations_shane':
       continue
     # Find codas within the current plot window.
@@ -1669,18 +1681,20 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
       update_codas_subplot(composite_img_current, layout_specs,
                            coda_data_toPlot, current_time_s, coda_plot_type, imagePlots[layout_specs],
                            subplot_horizontal_alignment='center')
-      duration_s_updateSubplots_total += time.time() - t0
       duration_s_updateSubplots_codas += time.time() - t0
+      duration_s_updateSubplots_total += time.time() - t0
 
   # Add a banner with the current timestamp.
+  t0 = time.time()
   composite_img_current = add_timestamp_banner(composite_img_current, current_time_s)
+  duration_s_addTimestampBanner = time.time() - t0
   
   # Show the updated composite frame if desired.
   if show_visualization_window:
     t0 = time.time()
     cv2.imshow('Happy Birthday!', cv2.cvtColor(scale_image(composite_img_dummy, target_width=600, target_height=600), cv2.COLOR_BGR2RGB))
     cv2.waitKey(1)
-    duration_s_showVisualization += time.time()-t0
+    duration_s_showVisualization += time.time() - t0
   
   # Add the frame to the buffer of frames to write to the output video.
   if composite_video_writer is not None:
@@ -1692,7 +1706,9 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
 # Release the output video.
 # This will also write any frames that are remaining in the write buffer.
 if composite_video_writer is not None:
+  t0 = time.time()
   composite_video_writer.release()
+  duration_s_writeFlush += time.time() - t0
 
 # Release video readers.
 for (device_id, media_file_infos) in media_infos.items():
@@ -1702,8 +1718,10 @@ for (device_id, media_file_infos) in media_infos.items():
 
 # All done!
 total_duration_s = time.time() - start_loop_time_s
+file_size_bytes_original = os.path.getsize(output_video_filepath)
 print()
 print('Generated composite video in %d seconds' % total_duration_s)
+print('  File size: %0.2f GiB (%0.2f MiB) (%d bytes)' % (file_size_bytes_original/1024/1024/1024, file_size_bytes_original/1024/1024, file_size_bytes_original))
 print()
 
 # Print timing information.
@@ -1723,22 +1741,25 @@ print('  Frame count   : %d' % output_video_timestamps_s.shape[0])
 print('  Frame rate    : %0.1f frames per second' % (output_video_timestamps_s.shape[0]/total_duration_s))
 print('  Speed factor  : %0.2f x real time' % (output_video_duration_s/total_duration_s))
 print('Processing breakdown: ')
-print('  UpdateSubplots (total)  : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_total/total_duration_s, duration_s_updateSubplots_total))
-print('  UpdateSubplots (audio)  : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_audio/total_duration_s, duration_s_updateSubplots_audio))
-print('  UpdateSubplots (codas)  : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_codas/total_duration_s, duration_s_updateSubplots_codas))
-print('  UpdateSubplots (drones) : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_drones/total_duration_s, duration_s_updateSubplots_drones))
-print('  UpdateSubplots (videos) : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_videos/total_duration_s, duration_s_updateSubplots_videos))
-print('  UpdateSubplots (images) : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_images/total_duration_s, duration_s_updateSubplots_images))
-print('  GetIndex                : %6.2f%% (%0.3f seconds)' % (100*duration_s_getIndex/total_duration_s, duration_s_getIndex))
-print('  ReadImages              : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readImages/total_duration_s, duration_s_readImages, readImages_count))
-print('  ReadVideos              : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readVideos/total_duration_s, duration_s_readVideos, readVideos_count))
-print('  ParseAudio              : %6.2f%% (%0.3f seconds)' % (100*duration_s_audioParsing/total_duration_s, duration_s_audioParsing))
-print('  ParseCodas              : %6.2f%% (%0.3f seconds)' % (100*duration_s_codasParsing/total_duration_s, duration_s_codasParsing))
-print('  ExportFrame             : %6.2f%% (%0.3f seconds)' % (100*duration_s_exportFrame/total_duration_s, duration_s_exportFrame))
-print('  WriteFrame              : %6.2f%% (%0.3f seconds)' % (100*duration_s_writeFrame/total_duration_s, duration_s_writeFrame))
-print('  DrawText                : %6.2f%% (%0.3f seconds)' % (100*get_duration_s_drawText()/total_duration_s, get_duration_s_drawText()))
-print('  ScaleImage              : %6.2f%% (%0.3f seconds)' % (100*get_duration_s_scaleImage()/total_duration_s, get_duration_s_scaleImage()))
-print('  Show Visualization      : %6.2f%% (%0.3f seconds)' % (100*duration_s_showVisualization/total_duration_s, duration_s_showVisualization))
+print('  Update subplots (total)    : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_total/total_duration_s, duration_s_updateSubplots_total))
+print('    Update subplots (audio)  :       %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_audio/total_duration_s, duration_s_updateSubplots_audio))
+print('    Update subplots (codas)  :       %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_codas/total_duration_s, duration_s_updateSubplots_codas))
+print('    Update subplots (drones) :       %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_drones/total_duration_s, duration_s_updateSubplots_drones))
+print('    Update subplots (videos) :       %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_videos/total_duration_s, duration_s_updateSubplots_videos))
+print('    Update subplots (images) :       %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_images/total_duration_s, duration_s_updateSubplots_images))
+print('  Get index for timestamp    : %6.2f%% (%0.3f seconds)' % (100*duration_s_getIndex/total_duration_s, duration_s_getIndex))
+print('  Load images                : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readImages/total_duration_s, duration_s_readImages, readImages_count))
+print('  Load video frames          : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readVideos/total_duration_s, duration_s_readVideos, readVideos_count))
+print('  Parse audio                : %6.2f%% (%0.3f seconds)' % (100*duration_s_audioParsing/total_duration_s, duration_s_audioParsing))
+print('  Parse codas                : %6.2f%% (%0.3f seconds)' % (100*duration_s_codasParsing/total_duration_s, duration_s_codasParsing))
+print('  Export frame               : %6.2f%% (%0.3f seconds)' % (100*duration_s_exportFrame/total_duration_s, duration_s_exportFrame))
+print('  Write frame                : %6.2f%% (%0.3f seconds)' % (100*duration_s_writeFrame/total_duration_s, duration_s_writeFrame))
+print('  Write flush                : %6.2f%% (%0.3f seconds)' % (100*duration_s_writeFlush/total_duration_s, duration_s_writeFlush))
+print('  Draw text                  : %6.2f%% (%0.3f seconds)' % (100*get_duration_s_drawText()/total_duration_s, get_duration_s_drawText()))
+print('  Add timestamp banner       : %6.2f%% (%0.3f seconds)' % (100*duration_s_addTimestampBanner/total_duration_s, duration_s_addTimestampBanner))
+print('  Scale images               : %6.2f%% (%0.3f seconds)' % (100*get_duration_s_scaleImage()/total_duration_s, get_duration_s_scaleImage()))
+print('  Show visualization         : %6.2f%% (%0.3f seconds)' % (100*duration_s_showVisualization/total_duration_s, duration_s_showVisualization))
+print('  Get blank frame            : %6.2f%% (%0.3f seconds)' % (100*duration_s_getBlankFrame/total_duration_s, duration_s_getBlankFrame))
 print()
 print()
 
@@ -1757,7 +1778,10 @@ if output_video_compressed_rate_MB_s is not None:
                                         os.path.splitext(output_video_filepath)[1])
   compress_video(output_video_filepath, output_video_compressed_filepath,
                  output_video_compressed_rate_MB_s*1024*1024*8)
+  file_size_bytes_compressed = os.path.getsize(output_video_compressed_filepath)
   print('  Compression completed in %0.3f seconds' % (time.time() - t0))
+  print('  File size: %0.2f GiB (%0.2f MiB) (%d bytes)' % (file_size_bytes_compressed/1024/1024/1024, file_size_bytes_compressed/1024/1024, file_size_bytes_compressed))
+  print('    Compression ratio: %0.2f' % (file_size_bytes_original/file_size_bytes_compressed))
   print()
 
 ######################################################
@@ -1842,7 +1866,10 @@ for output_video_filepath_toAddAudio in output_video_filepaths_toAddAudio:
                                       remove_temp=(not save_audio_track_as_separate_file) or saved_audio_file,
                                       )
     saved_audio_file = save_audio_track_as_separate_file
+    file_size_bytes_withAudio = os.path.getsize(output_video_withAudio_filepath)
     print('  Audio track added in %0.3f seconds' % (time.time() - t0))
+    print('  File size: %0.2f GiB (%0.2f MiB) (%d bytes)' % (file_size_bytes_withAudio/1024/1024/1024, file_size_bytes_withAudio/1024/1024, file_size_bytes_withAudio))
+    print('    Compression ratio: %0.2f' % ((os.path.getsize(output_video_filepath_toAddAudio))/file_size_bytes_withAudio))
     # Close handles to the audio files.
     for audio_clip in audio_clips:
       audio_clip.close()

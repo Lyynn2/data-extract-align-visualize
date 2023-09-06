@@ -339,16 +339,16 @@ class ImagePlot:
       if self._x_tick_spacing[tick_type] is not None:
         first_tick = next_multiple(self._xlim[0], self._x_tick_spacing[tick_type])
         last_tick = previous_multiple(self._xlim[1], self._x_tick_spacing[tick_type])
-        self._xticks[tick_type] = np.linspace(start=first_tick, stop=last_tick, 
-                                              num=int(1+(last_tick - first_tick)/self._x_tick_spacing[tick_type]))
+        self._xticks[tick_type] = np.arange(start=first_tick, stop=last_tick+self._x_tick_spacing[tick_type]/2, # add to the stop to be inclusive of last_tick
+                                            step=self._x_tick_spacing[tick_type])
         # Ensure that the specified value to include is a tick.
         offset_toAdd = self._x_tick_value_to_include - previous_multiple(self._x_tick_value_to_include, self._x_tick_spacing[tick_type])
         self._xticks[tick_type] += offset_toAdd
       if self._y_tick_spacing[tick_type] is not None:
         first_tick = next_multiple(self._ylim[0], self._y_tick_spacing[tick_type])
         last_tick = previous_multiple(self._ylim[1], self._y_tick_spacing[tick_type])
-        self._yticks[tick_type] = np.linspace(start=first_tick, stop=last_tick, 
-                                              num=int(1+(last_tick - first_tick)/self._y_tick_spacing[tick_type]))
+        self._yticks[tick_type] = np.arange(start=first_tick, stop=last_tick+self._y_tick_spacing[tick_type]/2, # add to the stop to be inclusive of last_tick
+                                            step=self._y_tick_spacing[tick_type])
         # Ensure that the specified value to include is a tick.
         offset_toAdd = self._y_tick_value_to_include - previous_multiple(self._y_tick_value_to_include, self._y_tick_spacing[tick_type])
         self._yticks[tick_type] += offset_toAdd
