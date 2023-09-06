@@ -1,4 +1,49 @@
 
+############
+#
+# Copyright (c) 2023 Joseph DelPreto and MIT CSAIL
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+# WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+# IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+# Created 2023 by Joseph DelPreto [https://josephdelpreto.com].
+#
+############
+
+# A few notable design choices for speed:
+#  Use custom subplotting via matrix slicing.
+#   This is significantly faster than using a framework such as Matplotlib or PyQtGraph and then exporting plots as images.
+#  Use Decord instead of OpenCV for reading videos.
+#   This is faster, more accurate for fetching a target frame index, and can scale images during the load.
+#  Use PIL instead of OpenCV for loading images.
+#   This is faster, and allows for scaling images during the load to get closer to the target size.
+#  Using the custom ImagePlot class for graphing, instead of a framework such as Matplotlib or PyQtGraph.
+#   This edits an image matrix directly (with quite a few speed considerations),
+#   which avoids the need to export a plot as an image.
+#  Using the custom ThreadedVideoWriter class, which allows frames to be written to a video in the background.
+#   This buffers frames to write, allowing the main loop to create the next frame while the previous one is being written.
+#  Only updating parts of the composite frame that have changed, instead of starting from an empty frame each iteration.
+#   For example, if a camera image or video frame are active for multiple output frames, can avoid updating that subplot.
+#  Compute spectrograms for each file at the beginning, and then scroll through that image matrix.
+#   This avoids computing a spectrogram of an audio snippet for each output frame.
+#  For large lists such as timestamps that are known to be sorted,
+#    using np.searchsorted instead of np.where and using first/last indexes instead of min/max.
+#  Avoid making copies of large numpy matrices when possible, and of assigning large segments of a matrix.
+
 import os
 import glob
 import re
@@ -19,37 +64,32 @@ from ThreadedVideoWriter import ThreadedVideoWriter
 
 from ImagePlot import ImagePlot
 import pyqtgraph
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
-from pyqtgraph.Qt.QtGui import QPixmap, QImage
-import pyqtgraph.exporters
 import distinctipy
 
 from helpers import *
 
 ######################################################
 # CONFIGURATION
-# Note that some of the below could be loaded
-#  from metadata files in the future.
 ######################################################
 
 # Specify the root data directory, which contains subfolders for each device
 data_dir_root = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
 
-# Specify the layout of devices streams in the output video.
+# Specify the subplot layout of device streams in the output video.
 # Each value is (row, column, rowspan, colspan).
 composite_layout = OrderedDict([
   ('Mavic (CETI)'         , (0, 0, 2, 2)),
   ('Mavic (DSWP)'         , (0, 2, 2, 2)),
-  # ('Canon (Gruber)'       , (2, 0, 1, 1)),
-  # ('Canon (DelPreto)'     , (2, 1, 1, 1)),
-  # ('Phone (DelPreto)'     , (2, 1, 1, 1)),
-  # ('GoPro (DelPreto)'     , (2, 1, 1, 1)),
-  # ('Canon (DSWP)'         , (2, 2, 1, 1)),
-  # ('Drone Positions'      , (2, 3, 1, 1)),
-  # ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
-  # ('Phone (Pagani)'       , (3, 1, 1, 1)),
-  # ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
-  # ('Phone (Aluma)'        , (3, 3, 1, 1)),
+  ('Canon (Gruber)'       , (2, 0, 1, 1)),
+  ('Canon (DelPreto)'     , (2, 1, 1, 1)),
+  ('Phone (DelPreto)'     , (2, 1, 1, 1)),
+  ('GoPro (DelPreto)'     , (2, 1, 1, 1)),
+  ('Canon (DSWP)'         , (2, 2, 1, 1)),
+  ('Drone Positions'      , (2, 3, 1, 1)),
+  ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
+  ('Phone (Pagani)'       , (3, 1, 1, 1)),
+  ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
+  ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
   ('Codas (ICI)',           (5, 0, 1, 4)),
   ('Codas (TFS)',           (6, 0, 1, 4)),
@@ -59,25 +99,35 @@ composite_layout = OrderedDict([
 # Note that in the future this could probably be determined automatically.
 localtime_offset_s = -4*3600
 localtime_offset_str = '-0400'
+# Specify whether drone timestamps in SRT files are in local or UTC time.
+drone_srt_timestamps_are_local_time = {
+  'CETI-DJI_MAVIC3-1'          : False,
+  'DSWP-DJI_MAVIC3-2'          : True,
+}
 
 # Specify offsets to add to timestamps extracted from filenames.
+# For each device, can specify:
+#  A single number, which will be added to all timestamps for that device.
+#  An ordered dictionary where each entry is (started-before-this-device-time, offset).
+#   A started-before-this-device-time of -1 indicates timestamps after the previous cutoff.
+#   For example, if the dictionary is [(5, 100), (8, 101), (-1, 102)] then device timestamps
+#    within [0, 5] will have 100s added to them, timestamps within (5, 8] will
+#    have 101 seconds added to them, and timestamps > 8 will have 102s added to them.
 epoch_offsets_toAdd_s = {
-  # 'CETI-DJI_MAVIC3-1'          : 0.79859,
-  # 'DSWP-DJI_MAVIC3-2'          : 2.10833,
-  'CETI-DJI_MAVIC3-1'          : OrderedDict([(1688829599.0, 0.79859), # (started-before-this-device-time, offset)
+  'CETI-DJI_MAVIC3-1'          : OrderedDict([(1688829599.0, 0.79859),
                                               (1688833020.0, 0.79859),
                                               (1688836800.0, 0.79859),
                                               (1688838240.0, 0.79859),
                                               (1688839260.0, 0.434701),
                                               (-1,           0.434701)]),
-  'DSWP-DJI_MAVIC3-2'          : OrderedDict([(1688829599.0, 6.097219), # (started-before-this-device-time, offset)
+  'DSWP-DJI_MAVIC3-2'          : OrderedDict([(1688829599.0, 6.097219),
                                               (1688833020.0, 2.10833),
                                               (1688836800.0, 6.297219),
                                               (1688838240.0, 6.499997),
                                               (1688839260.0, 6.499997),
                                               (-1,           2.299997)]),
   'DG-CANON_EOS_1DX_MARK_III-1': 14603.81506,
-  'JD-CANON_REBEL_T5I'         : OrderedDict([(1688831658, 14.37973), # (started-before-this-device-time, offset)
+  'JD-CANON_REBEL_T5I'         : OrderedDict([(1688831658, 14.37973),
                                               (-1,         15.244)]),
   'DSWP-CANON_EOS_70D-1'       : 14486.21306,
   'DSWP-KASHMIR_MIXPRE6-1'     : 32.7085,
@@ -88,12 +138,8 @@ epoch_offsets_toAdd_s = {
   'Misc/DelPreto_Pixel5'       : 26.39846,
   'Misc/DelPreto_GoPro'        : 8.52572,
 }
-drone_timestamps_are_local_time = {
-  'CETI-DJI_MAVIC3-1'          : False,
-  'DSWP-DJI_MAVIC3-2'          : True,
-}
 
-# Specify friendly names for each device that will be printed on the output video.
+# Specify friendly names for each device, which will be printed on the output video.
 # This also specifies the device IDs that exist, and directories will be searched accordingly.
 # For Misc devices, the keyword after "Misc/" will be used to find matching files in the Misc directory.
 device_friendlyNames = {
@@ -110,7 +156,7 @@ device_friendlyNames = {
   'Misc/DelPreto_Pixel5'       : 'Phone (DelPreto)',
   'Misc/DelPreto_GoPro'        : 'GoPro (DelPreto)',
   'Drone_Positions'            : 'Drone Positions',
-  '_coda_annotations_shane'    : 'Codas', # will catch "Codas (ICI)" and "Codas (TFS)"
+  '_coda_annotations_shane'    : 'Codas', # will catch "Codas (ICI)" and "Codas (TFS)" from the above subplot layout specification
 }
 
 # Define the start/end time of the video.
@@ -130,192 +176,193 @@ device_friendlyNames = {
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
 #
-# output_video_start_time_str = '2023-07-08 11:44:00 -0400'
-# output_video_start_time_str = '2023-07-08 11:45:00 -0400'
-# output_video_start_time_str = '2023-07-08 11:48:45 -0400'
-# output_video_start_time_str = '2023-07-08 11:49:00 -0400'
-# output_video_start_time_str = '2023-07-08 11:53:53 -0400'
-# output_video_start_time_str = '2023-07-08 11:53:00 -0400'
-# output_video_start_time_str = '2023-07-08 11:35:00 -0400'
-# output_video_start_time_str = '2023-07-08 11:37:52 -0400'
-# output_video_start_time_str = '2023-07-08 11:52:00 -0400'
-# output_video_start_time_str = '2023-07-08 11:53:38 -0400'
-# output_video_start_time_str = '2023-07-08 11:53:46 -0400'
-# output_video_start_time_str = '2023-07-08 11:54:32 -0400'
-# output_video_start_time_str = '2023-07-08 11:53:53 -0400'
-# output_video_start_time_str = '2023-07-08 11:54:55 -0400'
-# output_video_start_time_str = '2023-07-08 11:54:00 -0400'
-# output_video_start_time_str = '2023-07-08 14:05:00 -0400'
-
-# # Full span:
-# output_video_start_time_str = '2023-07-08 10:20:13 -0400'
-# output_video_duration_s = 19579
-
-# Hydrophone file 280:
-output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
-output_video_duration_s = 184.32
-
+# Full span:
+output_video_start_time_str = '2023-07-08 10:20:13 -0400'
+output_video_duration_s = 19579
+#
+# # Hydrophone file 280:
+# output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
+# output_video_duration_s = 184.32
+#
 # # Testing for hydrophone file 280:
 # output_video_start_time_str = '2023-07-08 11:55:10 -0400'
-# output_video_duration_s = 10
+# output_video_duration_s = 60
 
-# Define frame rate of output video
+# Define the frame rate of the output video.
 output_video_fps = 25
 
-# Define the output video size/resolution and compression.
+# Define the output video size and resolution.
 composite_layout_column_width = 600 # also defines the scaling/resolution of photos/videos
-subplot_border_size = 8 # ignored if the pyqtgraph subplot method is used
+subplot_border_size = 8 # the padding between subplots
 composite_layout_row_height = round(composite_layout_column_width/(1+7/9)) # Drone videos have an aspect ratio of 1.7777
-output_video_compressed_rate_MB_s = None # 0.5 # None to not compress the video
-# Note that the video will be implicitly compressed if audio is added to it
 
-# Define audio track added to the output video.
-add_audio_track_to_output_video_original = True
-add_audio_track_to_output_video_compressed = True
-delete_output_video_withoutAudio = False
-output_audio_track_volume_gain_factor = 50 # 1 to not change volume
+# Specify whether the output video should be compressed.
+# This will add an extra compression stage after the output video is generated.
+# Note that the video will be implicitly compressed if audio is added to it,
+#  so if add_audio_track_to_output_video_original is True then the below compression may be skippable.
+output_video_compressed_rate_MB_s = None # None to not compress the video # 0.5
+
+# Define the audio track added to the output video.
+# Note that the process of adding audio will implictly compress the video too.
 save_audio_track_as_separate_file = True
+output_audio_track_volume_gain_factor = 50 # 1 to not change the volume
+add_audio_track_to_output_video_original = True   # Add audio to the raw output video.
+add_audio_track_to_output_video_compressed = True # Add audio to a version that was explicitly compressed via output_video_compressed_rate_MB_s
+delete_output_video_withoutAudio = False # Delete the raw output video without audio, which may be quite large
 
-# Specify annotations on the output video.
-output_video_banner_height_fraction = 0.04 # fraction of the final composite frame
-output_video_banner_bg_color   = [100, 100, 100] # BGR
-output_video_banner_text_color = [255, 255,   0] # BGR
+# Configure device and timestamp labels on the output video.
+output_video_banner_height_fraction = 0.04 # fraction of the final composite frame height
+output_video_banner_bg_color   = [100, 100, 100] # RGB
+output_video_banner_text_color = [0,   255, 255] # RGB
+# Configure the labels that identify device streams on the output video.
+output_video_subplot_labels_text_color = [255, 255, 255] # RGB
+output_video_subplot_labels_bg_color = [100, 100, 100] # RGB
+output_video_subplot_labels_font_size = 0.9
+output_video_subplot_labels_font_thickness = 1
+output_video_subplot_labels_font = cv2.FONT_HERSHEY_SIMPLEX
 
-# Configure audio plotting
+# Configure audio parsing and plotting.
 audio_resample_rate_hz = 96000 # original rate is 96000
 audio_plot_duration_beforeCurrentTime_s = 5
 audio_plot_duration_afterCurrentTime_s  = 10
 audio_num_channels_toPlot = 1
-audio_plot_waveform = False
-audio_plot_spectrogram = True # Will force audio_num_channels_toPlot = 1 for now
-audio_waveform_plot_colors = [[255, 255, 255], [255, 0, 255]]
-audio_waveform_line_thicknesses = [4, 1]
-audio_waveform_plot_pens = [pyqtgraph.mkPen(audio_waveform_plot_colors[0], width=audio_waveform_line_thicknesses[0]),
-                            pyqtgraph.mkPen(audio_waveform_plot_colors[1], width=audio_waveform_line_thicknesses[1])]
-audio_waveform_plot_currentTime_color = (255, 255, 255) # BGR
+audio_plot_type = 'spectrogram' # 'spectrogram' or 'waveform'
+audio_plot_x_tick_spacing = {'major':2, 'minor':1} # will only show major ticks
+audio_plot_grid_thickness = {'major': 2, 'minor': 2}
+audio_plot_font_size = 0.8
+audio_plot_label_color = (150, 150, 150) # RGB
+# Configure audio waveform plotting.
+audio_waveform_plot_colors = [(255, 255, 255), (255, 0, 255)] # RGB for each channel
+audio_waveform_line_thicknesses = [4, 1] # an entry for each channel
+audio_waveform_plot_currentTime_color = (255, 255, 255) # RGB
 audio_waveform_plot_currentTime_thickness = 2
-audio_spectrogram_frequency_range = [0e3, min(40e3, audio_resample_rate_hz//2)]
+# Configure audio spectrogram plotting.
+audio_spectrogram_frequency_range = [0e3, min(40e3, audio_resample_rate_hz//2)] # Will be adjusted to match the achieved min/max after the first spectrogram is computed
 audio_spectrogram_frequency_tick_spacing_khz = 10
 audio_spectrogram_target_window_s = 0.03 # note that the achieved window may be a bit different
-# audio_spectrogram_colormap = 'CET-L16' # 'inferno', 'CET-CBTL1', 'CET-L1', 'CET-L16', 'CET-L3', 'CET-R1'
-audio_spectrogram_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
+audio_spectrogram_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True) # some other promising ones: 'nipy_spectral', 'turbo'
 audio_spectrogram_colorbar_levels = [0, 0.4]
-audio_spectrogram_colorbar_width = 30
-# audio_spectrogram_colormap = pyqtgraph.colormap.get('nipy_spectral', source='matplotlib', skipCache=True)
-# audio_spectrogram_colormap = pyqtgraph.colormap.get('turbo', source='matplotlib', skipCache=True)
-audio_spectrogram_plot_currentTime_color = (255, 255, 255)
+audio_spectrogram_colorbar_width_ratio = 0.0125 # fraction of plot image width
+audio_spectrogram_plot_currentTime_color = (255, 255, 255) # RGB
 audio_spectrogram_plot_currentTime_thickness = 2
-audio_plot_font_size = 0.8
-audio_plot_grid_thickness = {'major': 2, 'minor': 2}
-audio_plot_label_color = (150, 150, 150) # BGR
-audio_plot_x_tick_spacing = {'minor':1, 'major':2}
-audio_plot_hide_xlabels = True # e.g. if coda plot beneath it will have the labels instead
-
-# Configure drone plotting.
-drone_plot_reference_location_lonLat = [-61.373179, 15.306914]
-conversion_factor_lat_to_m = (111.32)*1000
-conversion_factor_lon_to_m = (40075 * np.cos(np.radians(drone_plot_reference_location_lonLat[1])) / 360) * 1000
-drone_lat_to_m = lambda lat: (lat - drone_plot_reference_location_lonLat[1]) * conversion_factor_lat_to_m
-drone_lon_to_m = lambda lon: (lon - drone_plot_reference_location_lonLat[0]) * conversion_factor_lon_to_m
-drone_plot_minRange_m = 250
-drone_plot_rangePad = 50
-drone_plot_tickSpacing_m = {'minor':25, 'major':100}
-# drone_plot_colors = [(180, 20, 180), (180, 180, 20)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
-drone_plot_colors = [(210, 0, 210), (190, 190, 0)] # BGR (but will be flipped to RGB for pyqtgraph pen below)
-drone_plot_marker_edge_thickness = 5
-# drone_plot_symbolPens = [pyqtgraph.mkPen(np.flip(drone_plot_colors[drone_index]), width=drone_plot_marker_edge_thickness) for drone_index in range(len(drone_plot_colors))]
-drone_plot_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
-drone_plot_color_lookup = drone_plot_colormap.getLookupTable(start=0, stop=1, nPts=1000)
-drone_plot_colorbar_levels = [0, 150]
-drone_plot_color_lookup_keys = np.linspace(start=drone_plot_colorbar_levels[0], stop=drone_plot_colorbar_levels[1], num=1000)
-drone_plot_colorbar_width = 20
-drone_colorbar_tickSpacing_m = 25
-drone_plot_grid_thickness = {'major': 2, 'minor': 2}
-drone_plot_label_color = (150, 150, 150) # RGB
-drone_plot_symbolSize = 25
-drone_plot_font_size = 1
 
 # Configure coda annotations plotting.
-codas_plot_yrange = {'ici': [-35, 625], # add a little at the top to shift the tick label down and avoid it being cut off
+codas_uncertain_whale_index = 20 # whale indexes >= this number represent uncertain annotations
+codas_plot_yrange = {'ici': [-25, 625],
                      'tfs': [-0.2, 2.0]}
-codas_plot_pen_width = 3
-codas_plot_symbolPen_width_certain = 1
-codas_plot_symbolPen_width_uncertain = 2
-codas_plot_symbolPen_outlineColor_certain = (150, 150, 150) # RGB
-codas_plot_symbolPen_outlineColor_uncertain = (255, 0, 0) # RGB
-codas_plot_get_symbol = lambda whale_index: 'diamond' if whale_index >= 20 else 'circle'
-codas_plot_get_symbol_endClick = lambda whale_index: 'triangle' if whale_index >= 20 else 'square'
-codas_plot_get_symbol_size = lambda whale_index: 14 if whale_index >= 20 else 16
+codas_plot_line_thickness = 3
+codas_plot_marker_edge_width = lambda whale_index: 1 if whale_index < codas_uncertain_whale_index \
+                                                   else 2
+codas_plot_marker_edge_color = lambda whale_index: (150, 150, 150) if whale_index < codas_uncertain_whale_index \
+                                                   else (255, 0, 0) # RGB
+codas_plot_marker_symbol = lambda whale_index: 'circle' if whale_index < codas_uncertain_whale_index \
+                                               else 'diamond'
+codas_plot_marker_symbol_endClick = lambda whale_index: 'square' if whale_index < codas_uncertain_whale_index \
+                                                        else 'triangle'
+codas_plot_marker_size = lambda whale_index: 16 if whale_index < codas_uncertain_whale_index else 14
 codas_plot_currentTime_thickness = 2
-codas_plot_currentTime_color = (255, 255, 255)
-codas_plot_currentTime_pen = pen=pyqtgraph.mkPen([200, 200, 200], width=12)
+codas_plot_currentTime_color = (255, 255, 255) # RGB
 codas_plot_font_size = 0.8
 codas_plot_x_tickSpacing_s = {'ici': audio_plot_x_tick_spacing,
                               'tfs': audio_plot_x_tick_spacing}
-codas_plot_y_tickSpacing = {'ici': {'minor':1, 'major':150},
-                            'tfs': {'minor':1, 'major':0.3}}
+codas_plot_y_tickSpacing = {'ici': {'major':150, 'minor':1}, # will only show major ticks
+                            'tfs': {'major':0.3, 'minor':1}} # will only show major ticks
 codas_plot_duration_beforeCurrentTime_s = audio_plot_duration_beforeCurrentTime_s #+ 0.325
 codas_plot_duration_afterCurrentTime_s = audio_plot_duration_afterCurrentTime_s #+ 0.325
 codas_plot_label_color = (150, 150, 150) # RGB
 codas_plot_grid_thickness = {'major': 2, 'minor': 2}
-codas_plot_grid_color = {'major': (50, 50, 50), 'minor': (25, 25, 25)}
-codas_plot_hide_xlabels = {'ici': True, 'tfs': False} # e.g. if a spectrogram plot beneath it will have the labels instead
+codas_plot_grid_color = {'major': (50, 50, 50), 'minor': (25, 25, 25)} # RGB
+codas_plot_unique_whale_colors = None # Will be computed later, once the number of whales is known
+codas_plot_whale_color = None # Will be a lambda function assigned later, once whale colors are computed
+# Configuration specific to TFS version of plot.
 codas_plot_tfs_scaleFactor = 1
-# Try to make the grid of the alignment plot line up with the grid of the spectrogram plot.
-# TODO make this more automatic somehow?
-coda_annotations_plot_align_with_spectrogram_above = True
-codas_plot_horizontal_alignment = 'center' # can be fraction of subplot width by which to shift the codas plot
-audio_coda_plots_left_axis_position_ratio = 0.054
-audio_coda_plots_right_axis_position_ratio = 0.95
+
+# Configuration for aligning spectrogram/waveform plots with coda plots.
+audio_plots_left_axis_position_ratio = 0.05  # fraction of plot image width at which the leftmost edge of the axis will be plotted
+audio_plots_right_axis_position_ratio = 0.95 # fraction of plot image width at which the rightmost edge of the axis will be plotted
+audio_plot_horizontal_alignment = 0 # fraction of composite image width at which to place the leftmost edge of the image plot inside the subplot
+codas_plot_hide_xlabels = {'ici': True, 'tfs': False} # e.g. if a spectrogram plot beneath it will have the labels instead
+audio_plot_hide_xlabels = True # e.g. if a coda plot beneath it will have the labels instead
+
+# Configure drone plotting.
+drone_plot_reference_location_lonLat = [-61.373179, 15.306914] # will plot meters from this location (the Mango house)
+conversion_factor_lat_to_km = (111.32) # From simplified Haversine formula: https://stackoverflow.com/a/39540339
+conversion_factor_lon_to_km = (40075 * np.cos(np.radians(drone_plot_reference_location_lonLat[1])) / 360) # From simplified Haversine formula: https://stackoverflow.com/a/39540339
+drone_lat_to_km = lambda lat:  (lat - drone_plot_reference_location_lonLat[1])*conversion_factor_lat_to_km
+drone_lon_to_km = lambda lon: -(lon - drone_plot_reference_location_lonLat[0])*conversion_factor_lon_to_km
+drone_plot_rangeRatio_bounds = [1, 3] # min/max ratio that the plot range can be, relative to the distance between the drones, before starting to zoom in/out
+drone_plot_minRange_km = 250/1000 # minimum range of x or y axis; but if drones are far from each other, range can dynamically expand
+drone_plot_rangePad_km = 50/1000  # minimum distance from a drone to the edge of the plot
+drone_plot_tickSpacing_km = {'minor':25/1000, 'major':100/1000}
+drone_plot_colors = [(210, 0, 210), (0, 190, 190)] # RGB for each drone; used for position plot and for outline on video labels
+drone_plot_marker_edge_thickness = 5 # outline of markers that will indicate which drone it is
+drone_plot_colorbar_levels_m = [0, 150] # altitude colorbar limits
+drone_plot_colorbar_tickSpacing_m = 25
+drone_plot_colormap = pyqtgraph.colormap.get('gist_stern', source='matplotlib', skipCache=True)
+drone_plot_colorbar_width_ratio = 0.033 # fraction of plot image width
+drone_plot_grid_thickness = {'major': 2, 'minor': 2}
+drone_plot_label_color = (150, 150, 150) # RGB
+drone_plot_symbolSize = round(0.05 * composite_layout_column_width)
+drone_plot_font_size = 0.8
 
 # Configure how device timestamps are matched with output video frame timestamps.
-timestamp_to_target_thresholds_s = { # each entry is the allowed time (before_current_frame, after_current_frame)
+# For each output video frame timestamp, will look for a device timestamp that is
+#  within a certain distance of that target time.
+# Each entry below specifies this window as (time_before_target_timestamp, time_after_target_timestamp).
+# Being strict would use 1/output_video_fps*0.5, which enforces that a device time must be within half of an output frame duration.
+#  In other words, finding the output frame that is the best match for a device time.
+# To add some leeway and avoid black frames if a device timestamps are slightly inconsistent though,
+#  the windows will be expanded slightly.
+timestamp_to_target_thresholds_s = {
   'video': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
   'audio': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
-  'image': (1, 1/output_video_fps), # first entry controls how long an image will be shown
+  'image': (1,                      1/output_video_fps*0.6), # first entry controls how long an image will be shown
   'drone': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
   'codas': (1/output_video_fps*0.6, 1/output_video_fps*0.6),
 }
-
-# Method of creating the composite visualization frame.
-use_pyqtgraph_subplots = False
-use_opencv_subplots = True
 
 # Visualization debugging options.
 show_visualization_window = False
 debug_composite_layout = False # Will show the layout with dummy data and then exit
 
 # Derived configurations.
-if audio_plot_waveform:
+if audio_plot_type == 'waveform':
   audio_plot_length_beforeCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_beforeCurrentTime_s)
   audio_plot_length_afterCurrentTime = int(audio_resample_rate_hz * audio_plot_duration_afterCurrentTime_s)
   audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
   audio_timestamps_toPlot_s = np.arange(start=0, stop=audio_plot_length)/audio_resample_rate_hz - audio_plot_duration_beforeCurrentTime_s
-elif audio_plot_spectrogram:
-  pass # will be derived later once the window length is known
+elif audio_plot_type == 'spectrogram':
+  # Plot lengths will be derived later once the achieved spectrogram window size is known
+  audio_plot_length_beforeCurrentTime = None
+  audio_plot_length_afterCurrentTime = None
+  audio_plot_length = None
 audio_spectrogram_window_s = None
 audio_plot_duration_s = (audio_plot_duration_beforeCurrentTime_s + audio_plot_duration_afterCurrentTime_s)
 
-output_video_banner_fontScale = None # will be determined later based on the size of the banner
-output_video_banner_textSize  = None # will be determined later once the font scale is computed
+drone_plot_color_lookup = drone_plot_colormap.getLookupTable(start=0, stop=1, nPts=1000)
+drone_plot_color_lookup_keys = np.linspace(start=drone_plot_colorbar_levels_m[0], stop=drone_plot_colorbar_levels_m[1], num=1000)
 
 output_video_num_rows = max([layout_specs[0] + layout_specs[2] for layout_specs in composite_layout.values()])
 output_video_num_cols = max([layout_specs[1] + layout_specs[3] for layout_specs in composite_layout.values()])
-if use_opencv_subplots:
-  output_video_width = composite_layout_column_width*output_video_num_cols + subplot_border_size*(output_video_num_cols+1)
-  output_video_height = composite_layout_row_height*output_video_num_rows + subplot_border_size*(output_video_num_rows+1)
-if use_pyqtgraph_subplots:
-  output_video_width = composite_layout_column_width*output_video_num_cols
-  output_video_height = composite_layout_row_height*output_video_num_rows
+output_video_width = composite_layout_column_width*output_video_num_cols + subplot_border_size*(output_video_num_cols+1)
+output_video_height = composite_layout_row_height*output_video_num_rows + subplot_border_size*(output_video_num_rows+1)
+# Create a blank image to use as the background.
+def get_composite_img_blank():
+  return np.zeros(shape=(output_video_height, output_video_width, 3), dtype=np.uint8)
+
+output_video_banner_fontScale = None # will be determined later based on the size of the banner
+output_video_banner_textSize  = None # will be determined later once the font scale is computed
+output_video_banner_height = int(output_video_banner_height_fraction*output_video_height)
+output_video_banner_font = cv2.FONT_HERSHEY_SIMPLEX
 
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
 output_video_filepath = os.path.join(data_dir_root,
-                                     'composite_video_TEST_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
+                                     'composite_video_UPDATED_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
                                      % (output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
                                         composite_layout_column_width,
-                                        audio_resample_rate_hz, 'spectrogram' if audio_plot_spectrogram else 'waveform',
+                                        audio_resample_rate_hz, audio_plot_type,
                                         ''.join(['_codasICI' if 'Codas (ICI)' in list(composite_layout.keys()) else '',
                                                  '_codasTFS' if 'Codas (TFS)' in list(composite_layout.keys()) else ''])))
 
@@ -333,7 +380,7 @@ def device_friendlyName_to_id(device_friendlyName_toFind):
       return device_id
   return None
 
-# Find the desired epoch offset for a given device at a given start time.
+# Add the desired epoch offset for a given device at a given start time.
 def adjust_start_time_s(media_start_time_s, device_id):
   if isinstance(epoch_offsets_toAdd_s[device_id], dict):
     cutoff_times = list(epoch_offsets_toAdd_s[device_id].keys())
@@ -347,9 +394,8 @@ def adjust_start_time_s(media_start_time_s, device_id):
   
 # Find a timestamp from a device that most closely matches a target timestamp.
 # Will return the index of that matched timestamp within the device's array of timestamps.
-# If there is no such timestamp within a specified threshold of the target, return None.
+# If there is no such timestamp within a specified threshold of the target, returns None.
 def get_index_for_time_s(timestamps_s, target_time_s, timestamp_to_target_thresholds_s):
-  # Find the timestamp closest to the target.
   if timestamps_s.shape[0] == 1:
     # If there is only one timestamp, consider that the best one.
     best_index = 0
@@ -357,16 +403,21 @@ def get_index_for_time_s(timestamps_s, target_time_s, timestamp_to_target_thresh
     # Find the index where the target timestamp would be inserted without changing the sort order.
     # This is much faster than using something like numpy.where(), since it can assume the input is sorted.
     next_index_pastTarget = timestamps_s.searchsorted(target_time_s)
+    # If it returned the length of the array, decrement it to make it a valid index.
     if next_index_pastTarget == timestamps_s.shape[0]:
       next_index_pastTarget -= 1
-    # The above placed the target between two device timestamps.
-    # Now see which one of those two is closer to the target.
-    index_candidates = np.array([next_index_pastTarget-1, next_index_pastTarget])
-    dt_candidates = abs(timestamps_s[index_candidates] - target_time_s)
-    if dt_candidates[0] < dt_candidates[1]:
-      best_index = index_candidates[0]
+    # If it returned the first element, use that as the best index.
+    if next_index_pastTarget == 0:
+      best_index = 0
     else:
-      best_index = index_candidates[1]
+      # We have placed the target between two device timestamps.
+      # Now see which one of those two is closer to the target.
+      index_candidates = np.array([next_index_pastTarget-1, next_index_pastTarget])
+      dt_candidates = np.abs(timestamps_s[index_candidates] - target_time_s)
+      if dt_candidates[0] < dt_candidates[1]:
+        best_index = index_candidates[0]
+      else:
+        best_index = index_candidates[1]
   # Check if the closest timestamp is within the threshold region of the target.
   if timestamps_s[best_index] < (target_time_s - timestamp_to_target_thresholds_s[0]):
     return None
@@ -377,10 +428,9 @@ def get_index_for_time_s(timestamps_s, target_time_s, timestamp_to_target_thresh
 
 # Add a banner to the output frame that displays the current timestamp.
 def add_timestamp_banner(img, timestamp_s):
-  global output_video_banner_height_fraction, output_video_banner_bg_color, output_video_banner_fontScale, output_video_banner_textSize
+  global output_video_banner_fontScale, output_video_banner_textSize
   
   # Add the bottom banner shading.
-  output_video_banner_height = int(output_video_banner_height_fraction*img.shape[0])
   img = cv2.copyMakeBorder(img, 0, output_video_banner_height, 0, 0,
                            cv2.BORDER_CONSTANT, value=output_video_banner_bg_color)
   
@@ -389,7 +439,7 @@ def add_timestamp_banner(img, timestamp_s):
                                   timestamp_s)
   
   # Compute the size of the text that will be drawn on the image.
-  fontFace = cv2.FONT_HERSHEY_SIMPLEX # cv2.FONT_HERSHEY_SIMPLEX
+  fontFace = output_video_banner_font
   fontThickness = 2 if output_video_banner_height > 25 else 1
   if output_video_banner_fontScale is None:
     # If this is the first time, compute a font size to use.
@@ -419,48 +469,57 @@ def add_timestamp_banner(img, timestamp_s):
   return img
 
 
-if use_opencv_subplots:
-  def get_slice_indexes_for_subplot_update(layout_specs, subplot_img=None, horizontal_alignment='center'):
-    (row, col, rowspan, colspan) = layout_specs
-    # Get the indexes of the total space allocated to this subplot.
-    start_col_index = subplot_border_size*(col+1) + composite_layout_column_width*(col)
-    end_col_index = start_col_index + composite_layout_column_width*(colspan) + subplot_border_size*(colspan-1) - 1
-    start_row_index = subplot_border_size*(row+1) + composite_layout_row_height*(row)
-    end_row_index = start_row_index + composite_layout_row_height*(rowspan) + subplot_border_size*(rowspan-1) - 1
-    # Position the desired image in the subplot.
-    if subplot_img is not None:
-      subplot_width = end_col_index - start_col_index + 1
-      if horizontal_alignment == 'center':
-        pad_left = (subplot_width - subplot_img.shape[1])//2
-        pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
-      elif horizontal_alignment == 'left':
-        pad_left = 0
-        pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
-      elif horizontal_alignment == 'right':
-        pad_right = 0
-        pad_left = (subplot_width - subplot_img.shape[1]) - pad_right
-      elif isinstance(horizontal_alignment, float): # fractional shift from the left
-        pad_left = round(subplot_width*horizontal_alignment)
-        pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
-      else:
-        raise AssertionError('Unknown subplot alignment option [%s]' % horizontal_alignment)
-      start_col_index += pad_left
-      end_col_index -= pad_right
-      subplot_height = end_row_index - start_row_index + 1
-      pad_top = (subplot_height - subplot_img.shape[0])//2
-      pad_bottom = (subplot_height - subplot_img.shape[0]) - pad_top
-      start_row_index += pad_top
-      end_row_index -= pad_bottom
-    # Return the slice indexes.
-    # Increment end indexes since the end indexes computed above were considered inclusive,
-    #  but slicing will be exclusive of the end indexes.
-    return (start_row_index, end_row_index+1, start_col_index, end_col_index+1)
-  
-  def get_subplot_size(layout_specs):
-    (start_row_index, end_row_index, start_col_index, end_col_index) = get_slice_indexes_for_subplot_update(layout_specs)
-    subplot_width = end_col_index-start_col_index
-    subplot_height = end_row_index-start_row_index
-    return (subplot_width, subplot_height)
+# Get slice indexes into the main composite image that represent a desired subplot region.
+# Returned indexes will be inclusive of start indexes but exclusive of end indexes
+#  so they can be used to directly index an array.
+# layout_specs is (row, column, rowspan, colspan).
+# If subplot_img is None, will return the entire subplot area.
+# If subplot_img is provided, will use its size and place it within the subplot.
+#   If horizontal_alignment controls how the image is positioned within the larger subplot area.
+#     Can be 'center', 'left', 'right', or a number between 0 and 1.
+#     If a number is provided, will place the left edge of the subplot image at that fraction of the overall subplot area.
+def get_slice_indexes_for_subplot_update(layout_specs, subplot_img=None, horizontal_alignment='center'):
+  (row, col, rowspan, colspan) = layout_specs
+  # Get the indexes of the total space allocated to this subplot.
+  start_col_index = subplot_border_size*(col+1) + composite_layout_column_width*(col)
+  end_col_index = start_col_index + composite_layout_column_width*(colspan) + subplot_border_size*(colspan-1) - 1
+  start_row_index = subplot_border_size*(row+1) + composite_layout_row_height*(row)
+  end_row_index = start_row_index + composite_layout_row_height*(rowspan) + subplot_border_size*(rowspan-1) - 1
+  # Position the desired image in the subplot.
+  if subplot_img is not None:
+    subplot_width = end_col_index - start_col_index + 1
+    if horizontal_alignment == 'center':
+      pad_left = (subplot_width - subplot_img.shape[1])//2
+      pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+    elif horizontal_alignment == 'left':
+      pad_left = 0
+      pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+    elif horizontal_alignment == 'right':
+      pad_right = 0
+      pad_left = (subplot_width - subplot_img.shape[1]) - pad_right
+    elif isinstance(horizontal_alignment, float): # fractional shift from the left
+      pad_left = round(subplot_width*horizontal_alignment)
+      pad_right = (subplot_width - subplot_img.shape[1]) - pad_left
+    else:
+      raise AssertionError('Unknown subplot alignment option [%s]' % horizontal_alignment)
+    start_col_index += pad_left
+    end_col_index -= pad_right
+    subplot_height = end_row_index - start_row_index + 1
+    pad_top = (subplot_height - subplot_img.shape[0])//2
+    pad_bottom = (subplot_height - subplot_img.shape[0]) - pad_top
+    start_row_index += pad_top
+    end_row_index -= pad_bottom
+  # Return the slice indexes.
+  # Increment end indexes since the end indexes computed above were considered inclusive,
+  #  but slicing will be exclusive of the end indexes.
+  return (start_row_index, end_row_index+1, start_col_index, end_col_index+1)
+
+# Get the size of a subplot area.
+def get_subplot_size(layout_specs):
+  (start_row_index, end_row_index, start_col_index, end_col_index) = get_slice_indexes_for_subplot_update(layout_specs)
+  subplot_width = end_col_index - start_col_index
+  subplot_height = end_row_index - start_row_index
+  return (subplot_width, subplot_height)
   
 ######################################################
 # LOAD TIMESTAMPS AND DATA POINTERS
@@ -470,22 +529,32 @@ if use_opencv_subplots:
 #   [device_id][filepath] = (timestamps_s, data)
 #   If filepath points to a video:
 #     timestamps_s is a numpy array of epoch timestamps for every frame
-#     data is a cv2.VideoCapture object
+#     data is a video reader object
 #   If filepath points to a wav file:
 #     timestamps_s is a numpy array of epoch timestamps for every sample
-#     data is a num_samples x num_channels matrix of audio data
+#     if plotting waveforms, data is an [num_samples x num_channels] matrix of audio data
+#     if plotting spectrograms, data is an [num_frequency_bins, num_time_bins, 3] image matrix
 #   If filepath points to an image:
 #     timestamps_s is a single-element numpy array with the epoch timestamps of the image
 #     data is the filepath again
 media_infos = OrderedDict()
+
+# For drone data, will create a dictionary of the same format
+#   [device_id][filepath] = (timestamps_s, data) where
+#   timestamps_s is a numpy array of epoch timestamps for every frame
+#   data is a dictionary returned by helpers.get_drone_srt_data()
 drone_datas = OrderedDict()
-codas_data = { # Will create one combined data from all files, instead of a mapping from file to data
+
+# For coda annotations, will create one combined dictionary from all files.
+codas_data = {
   'coda_start_times_s': [],
   'coda_end_times_s': [],
   'click_icis_s': [],
   'click_times_s': [],
   'whale_indexes': [],
 }
+codas_files_start_times_s = []
+codas_files_end_times_s = []
 
 print()
 print('Extracting timestamps and pointers to data for every frame/photo/audio')
@@ -503,7 +572,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   filepaths = [filepath for filepath in filepaths if not os.path.isdir(filepath)]
   if len(filepaths) == 0:
     continue
-  media_infos[device_id] = {}
+  
   # Skip files that start after the composite video ends.
   # Do this now, so the below loop can know how many files there are (for printing purposes and whatnot).
   filepaths_toKeep = []
@@ -522,8 +591,9 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   filepaths = filepaths_toKeep
 
   # Loop through each file to extract its timestamps and data pointers.
+  media_infos[device_id] = {}
   for (file_index, filepath) in enumerate(filepaths):
-    # Get the start time in epoch time
+    # Get the start time in epoch time from the filename.
     filename = os.path.basename(filepath)
     if 'coda_annotations' not in device_id:
       start_time_ms = int(re.search('\d{13}', filename)[0])
@@ -531,33 +601,52 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
       start_time_s = adjust_start_time_s(start_time_s, device_id)
     else:
       start_time_s = None
-    # Process the data/timestamps.
+    
+    # Define a helper to extract drone data,
+    #  since we may do it from encountering an SRT file or a drone video.
+    def get_drone_datas_entry(filepath):
+      drone_data = get_drone_srt_data(filepath)
+      if drone_data is not None:
+        timestamps_s = drone_data['timestamp_s']
+        # Adjust for time zone offset, since the filename epochs correct for it
+        #  but the SRT data does not.  So this will get us to the filename reference frame,
+        #  and allow the manually specified offsets to apply.
+        if not drone_srt_timestamps_are_local_time[device_id]:
+          timestamps_s = timestamps_s + localtime_offset_s
+        # Apply the manually specified offsets.
+        start_timestamp_s = adjust_start_time_s(timestamps_s[0], device_id)
+        timestamps_s = timestamps_s + (start_timestamp_s - timestamps_s[0])
+        # Return the drone data.
+        return (timestamps_s, drone_data)
+      return (None, None)
+      
+    # Process the data/timestamps for each file.
+    
+    if is_drone_data(filepath):
+      drone_datas_entry = get_drone_datas_entry(filepath)
+      if drone_datas_entry[0] is not None:
+        drone_datas.setdefault(device_id, {})
+        drone_datas[device_id][filepath] = drone_datas_entry
+      
     if is_video(filepath):
       (subplot_width, subplot_height) = get_subplot_size(layout_specs)
       (video_reader, frame_rate, num_frames) = get_video_reader(filepath,
                                                                 target_width=subplot_width,
                                                                 target_height=subplot_height)
-      # Extract frame timestamps from an SRT file if one exists.
+      # For drones, extract frame timestamps from an SRT file if one exists.
       # Otherwise, generate timestamps assuming a constant frame rate.
-      drone_data = get_drone_data(filepath, timezone_offset_str=localtime_offset_str)
-      if drone_data is not None:
-        timestamps_s = drone_data['timestamp_s']
-        # Adjust for time zone offset explicitly, since the file epochs correct for it
-        #  but the SRT data would not.  So this will get us to the filename reference,
-        #  and allow the manually specified offsets to apply.
-        if not drone_timestamps_are_local_time[device_id]:
-          timestamps_s = timestamps_s + localtime_offset_s
-        start_timestamp_s = adjust_start_time_s(timestamps_s[0], device_id)
-        timestamps_s = timestamps_s + (start_timestamp_s - timestamps_s[0])
-        drone_datas.setdefault(device_id, {})
-        drone_datas[device_id][filepath] = (timestamps_s, drone_data)
+      drone_datas_entry = get_drone_datas_entry(filepath)
+      if drone_datas_entry[0] is not None:
+        timestamps_s = drone_datas_entry[0]
       else:
         frame_duration_s = 1/frame_rate
         timestamps_s = start_time_s + np.arange(start=0, stop=num_frames)*frame_duration_s
       media_infos[device_id][filepath] = (timestamps_s, video_reader)
+    
     elif is_image(filepath):
       timestamps_s = np.array([start_time_s])
       media_infos[device_id][filepath] = (timestamps_s, filepath)
+    
     elif is_audio(filepath):
       if file_index > 0:
         print('\r', end='')
@@ -590,7 +679,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
         audio_data = audio_data_resampled
         timestamps_s = timestamps_s_resampled
       # Compute a spectrogram of the entire file.
-      if audio_plot_spectrogram:
+      if audio_plot_type == 'spectrogram':
         print('\r', end='')
         print('    Computing spectrogram for file %2d/%2d     ' % (file_index+1, len(filepaths)), end='')
         spectrogram_f, spectrogram_t, spectrogram = \
@@ -598,46 +687,37 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
                              window=signal.get_window('tukey', int(audio_spectrogram_target_window_s * audio_resample_rate_hz)),
                              scaling='density',  # density or spectrum (default is density)
                              nperseg=None)
-        # Check that the achieved window size is the same for all files.
-        #  If not, will need to store the plot length variables for each file.
-        if audio_spectrogram_window_s is not None:
+        # Determine epoch timestamps of each entry in the spectrogram.
+        timestamps_s = spectrogram_t + timestamps_s[0]
+        # Truncate to the desired frequency range.
+        min_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[0])
+        max_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[-1])
+        spectrogram_f = spectrogram_f[min_f_index:(max_f_index+1)]
+        spectrogram = spectrogram[min_f_index:max_f_index, :]
+        # If this is the first spectrogram computed:
+        #   Update the plot frequency range to match the achieved range after discretization.
+        # Otherwise, check that the achieved window size and frequency range are the same for all files.
+        #  (If not, will need to store these settings for each file.)
+        if audio_spectrogram_window_s is None:
+          audio_spectrogram_frequency_range = [spectrogram_f[0], spectrogram_f[-1]]
+        else:
           assert(audio_spectrogram_window_s == np.round(np.mean(np.diff(spectrogram_t)), 6))
+          assert(audio_spectrogram_frequency_range == [spectrogram_f[0], spectrogram_f[-1]])
         # Compute the audio plot range based on the achieved window size.
         audio_spectrogram_window_s = np.round(np.mean(np.diff(spectrogram_t)), 6)
         audio_plot_length_beforeCurrentTime = int(audio_plot_duration_beforeCurrentTime_s/audio_spectrogram_window_s)
         audio_plot_length_afterCurrentTime = int(audio_plot_duration_afterCurrentTime_s/audio_spectrogram_window_s)
         audio_plot_length = 1 + audio_plot_length_beforeCurrentTime + audio_plot_length_afterCurrentTime
-        # Truncate to the desired frequency range.
-        min_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[0])
-        max_f_index = spectrogram_f.searchsorted(audio_spectrogram_frequency_range[-1])
-        spectrogram_f = spectrogram_f[min_f_index:max_f_index]
-        spectrogram = spectrogram[min_f_index:max_f_index, :]
-        # Determine colorbar levels.
-        colorbar_levels = audio_spectrogram_colorbar_levels
-        # Determine epoch timestamps of each entry in the spectrogram.
-        timestamps_s = spectrogram_t + timestamps_s[0]
-        # Determine frequency tick labels.
-        f_tick_targets = np.arange(start=np.floor(spectrogram_f[0]/1000), stop=np.ceil(spectrogram_f[-1]/1000), step=np.ceil(audio_spectrogram_frequency_range[-1]/1000/5))
-        f_tick_indexes = [spectrogram_f.searchsorted(f_tick_target*1000) for f_tick_target in f_tick_targets]
-        f_ticks = [(f_tick_index, '%0.0f' % (spectrogram_f[f_tick_index]/1000)) for f_tick_index in f_tick_indexes]
-        # Determine time tick labels using a sample portion of the spectrogram.
-        t_tick_values = list(np.arange(start=-audio_plot_duration_beforeCurrentTime_s, stop=0, step=2)) \
-                        + list(np.arange(start=0, stop=audio_plot_duration_afterCurrentTime_s, step=2))
-        t_tick_values = np.array([round(t_tick_value) for t_tick_value in t_tick_values])
-        sample_spectrogram_t = np.arange(start=0, stop=audio_plot_length, step=1)*audio_spectrogram_window_s
-        sample_spectrogram_t -= audio_plot_duration_beforeCurrentTime_s
-        t_ticks = []
-        for t_tick_value in t_tick_values:
-          spectrogram_t_index = sample_spectrogram_t.searchsorted(t_tick_value)
-          t_ticks.append((spectrogram_t_index, '%0.0f' % t_tick_value))
         # Convert spectrogram magnitudes to colors.
-        spectrogram_colormapped = audio_spectrogram_colormap.map(spectrogram/audio_spectrogram_colorbar_levels[1])[:,:,0:3]
+        # Also convert from BGR to RGB.
+        spectrogram_colormapped = audio_spectrogram_colormap.map(spectrogram/audio_spectrogram_colorbar_levels[1])[:,:,(2,1,0)]
         # Save the information
-        media_infos[device_id][filepath] = (timestamps_s, (spectrogram_colormapped, t_ticks, f_ticks, colorbar_levels))
-      elif audio_plot_waveform:
+        media_infos[device_id][filepath] = (timestamps_s, spectrogram_colormapped)
+      elif audio_plot_type == 'waveform':
         media_infos[device_id][filepath] = (timestamps_s, audio_data)
       if file_index == len(filepaths)-1:
         print()
+    
     elif is_coda_annotations(filepath):
       (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes) = \
         get_coda_annotations(filepath, data_dir_root, adjust_start_time_s)
@@ -646,6 +726,9 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
       codas_data['click_icis_s'].extend(click_icis_s)
       codas_data['click_times_s'].extend(click_times_s)
       codas_data['whale_indexes'].extend(whale_indexes)
+      if len(click_times_s) > 0:
+        codas_files_start_times_s.append(click_times_s[0][0])
+        codas_files_end_times_s.append(click_times_s[-1][-1])
       del media_infos[device_id]
 
 # Remove devices with no data for the composite video.
@@ -661,729 +744,650 @@ if len(device_ids_to_remove) > 0:
     del media_infos[device_id]
 
 ######################################################
-# INITIALIZE THE OUTPUT VIDEO
+# VISUALIZATION FUNCTIONS
+######################################################
+
+# Update a subplot with new image data.
+# composite_img is the composite frame image to update.
+# layout_specs is (row, col, rowspan, colspan) of the subplot location.
+# data is the image to place in its subplot.
+# subplot_label is text to write on the image if desired.
+#   subplot_label_color is the text color in RGB format.
+# subplot_horizontal_alignment controls how the image is positioned within the larger subplot area.
+#   Can be 'center', 'left', 'right', or a number between 0 and 1.
+#   If a number is provided, will place the left edge of the subplot image at that fraction of the overall subplot area.
+# Returns the updated composite image.
+def update_image_subplot(composite_img, layout_specs, data,
+                         subplot_label=None, subplot_label_outline_color=None,
+                         subplot_horizontal_alignment='center'):
+  # Update the subplot within the image.
+  image_slice_indexes = get_slice_indexes_for_subplot_update(layout_specs, data, horizontal_alignment=subplot_horizontal_alignment)
+  composite_img[image_slice_indexes[0]:image_slice_indexes[1], image_slice_indexes[2]:image_slice_indexes[3]] = data
+  # Add a label to the subplot if desired.
+  if subplot_label is not None and len(subplot_label) > 0:
+    # Get the indexes of the entire subplot area and to the region for the placed image.
+    subplot_slice_indexes = get_slice_indexes_for_subplot_update(layout_specs)
+    subplot_width = subplot_slice_indexes[3] - subplot_slice_indexes[2]
+    subplot_height = subplot_slice_indexes[1] - subplot_slice_indexes[0]
+    # Determine the size and position of the text on the image/subplot.
+    (text_w, text_h, _, text_pos) = draw_text_on_image(np.zeros_like(data), subplot_label,
+                                       pos=(0, -1), # bottom left corner
+                                       font_scale=output_video_subplot_labels_font_size,
+                                       font_thickness=output_video_subplot_labels_font_thickness,
+                                       font=output_video_subplot_labels_font,
+                                       text_width_ratio=None,
+                                       text_bg_color_bgr=output_video_subplot_labels_bg_color,
+                                       text_bg_outline_color_bgr=subplot_label_outline_color,
+                                       text_color_bgr=output_video_subplot_labels_text_color,
+                                       preview_only=True)
+    # If the text can fit on the data image, draw it in its bottom-left corner.
+    if text_w <= data.shape[1]:
+      draw_text_on_image(composite_img, subplot_label,
+                         pos=(text_pos[0]+image_slice_indexes[2],  # x position of text in data, plus left of data in composite frame
+                              text_pos[1]+image_slice_indexes[0]), # y position of text in data, plus top of data in composite frame
+                         font_scale=output_video_subplot_labels_font_size,
+                         font_thickness=output_video_subplot_labels_font_thickness,
+                         font=output_video_subplot_labels_font,
+                         text_width_ratio=None,
+                         text_bg_color_bgr=output_video_subplot_labels_bg_color,
+                         text_bg_outline_color_bgr=subplot_label_outline_color,
+                         text_color_bgr=output_video_subplot_labels_text_color)
+    # Otherwise, center it over the data image but allow it to extend beyond its bounds.
+    else:
+      # If the text is larger than the subplot, scale it to fit.
+      if text_w > subplot_width:
+        text_width_ratio = 0.95
+      else:
+        text_width_ratio = None
+      # Determine the size and position of the scaled centered text on the subplot area.
+      (text_w, text_h, font_scale, text_pos) = draw_text_on_image(np.zeros(shape=(subplot_height, subplot_width, 3), dtype=np.uint8),
+                                                 subplot_label,
+                                                 pos=(0.5, -1), # centered left/right, bottom
+                                                 font_scale=output_video_subplot_labels_font_size,
+                                                 font_thickness=output_video_subplot_labels_font_thickness,
+                                                 font=output_video_subplot_labels_font,
+                                                 text_width_ratio=text_width_ratio,
+                                                 text_bg_color_bgr=output_video_subplot_labels_bg_color,
+                                                 text_bg_outline_color_bgr=subplot_label_outline_color,
+                                                 text_color_bgr=output_video_subplot_labels_text_color,
+                                                 preview_only=True)
+      # Draw the text on the full composite image.
+      draw_text_on_image(composite_img, subplot_label,
+                         pos=(text_pos[0]+subplot_slice_indexes[2],  # x position of text in subplot, plus left of subplot in composite frame
+                              text_pos[1]+subplot_slice_indexes[0]), # y position of text in subplot, plus top of subplot in composite frame
+                         font_scale=font_scale,
+                         font_thickness=output_video_subplot_labels_font_thickness,
+                         font=output_video_subplot_labels_font,
+                         text_width_ratio=None,
+                         text_bg_color_bgr=output_video_subplot_labels_bg_color,
+                         text_bg_outline_color_bgr=subplot_label_outline_color,
+                         text_color_bgr=output_video_subplot_labels_text_color)
+  # Return the updated composite image.
+  return composite_img
+
+
+# Update a subplot with new audio data.
+# composite_img is the composite frame image to update.
+# layout_specs is (row, col, rowspan, colspan) of the subplot location.
+# data is the spectrogram image matrix or waveform data.
+# subplot_horizontal_alignment controls how the image is positioned within the larger subplot area.
+#   Can be 'center', 'left', 'right', or a number between 0 and 1.
+#   If a number is provided, will place the left edge of the subplot image at that fraction of the overall subplot area.
+# audio_imagePlot is the ImagePlot object to update.
+# Returns the updated composite image.
+def update_audio_subplot(composite_img, layout_specs, data,
+                         audio_imagePlot,
+                         subplot_horizontal_alignment='center'):
+  if audio_plot_type == 'waveform':
+    # Reset the plot to an empty state.
+    audio_imagePlot.clear_plot()
+    # Update the y limits.
+    upper_data_value = np.quantile(data, 0.95)
+    if upper_data_value < 50:
+      y_limits = [-50, 50] # avoid zooming in to an empty plot
+    else:
+      y_limits = upper_data_value*np.array([-1, 1])
+    audio_imagePlot.set_y_ticks_major(y_limits[1]*np.array([-1, 0, 1]))
+    audio_imagePlot.set_y_limits(y_limits)
+    audio_imagePlot.render_empty()
+    for channel_index in range(audio_num_channels_toPlot):
+      audio_imagePlot.plot(audio_timestamps_toPlot_s, data[:,channel_index],
+                            line_thickness=audio_waveform_line_thicknesses[channel_index],
+                            color=audio_waveform_plot_colors[channel_index],
+                            marker_symbols=None)
+    # Plot a vertical current time marker.
+    if upper_data_value < 50:
+      audio_imagePlot.plot([0, 0], [-50, 50], marker_symbols=None,
+                            line_thickness=audio_waveform_plot_currentTime_thickness,
+                            color=audio_waveform_plot_currentTime_color)
+    else:
+      audio_imagePlot.plot([0, 0], upper_data_value*np.array([-1, 1]), marker_symbols=None,
+                            line_thickness=audio_waveform_plot_currentTime_thickness,
+                            color=audio_waveform_plot_currentTime_color)
+    # Update the subplot with the image.
+    composite_img = update_image_subplot(composite_img, layout_specs,
+                                         audio_imagePlot.get_plot_image(),
+                                         subplot_label=None, subplot_label_outline_color=None,
+                                         subplot_horizontal_alignment=subplot_horizontal_alignment)
+  
+  elif audio_plot_type == 'spectrogram':
+    # Reset the plot to an empty axis.
+    audio_imagePlot.clear_plot()
+    # Add the spectrogram image,
+    #  and stretch it to fill the axis limits.
+    audio_imagePlot.plot_image(data, flip_image_upDown=True)
+    # Add the current-time marker.
+    audio_imagePlot.plot([0, 0], audio_imagePlot.get_y_limits(), marker_symbols=None,
+                                line_thickness=audio_spectrogram_plot_currentTime_thickness,
+                                color=audio_spectrogram_plot_currentTime_color)
+    # Update the subplot with the image.
+    composite_img = update_image_subplot(composite_img, layout_specs,
+                                         audio_imagePlot.get_plot_image(),
+                                         subplot_label=None, subplot_label_outline_color=None,
+                                         subplot_horizontal_alignment=subplot_horizontal_alignment)
+  
+  else:
+    raise AssertionError('Unknown audio plot type [%s]' % audio_plot_type)
+  
+  # Return the updated composite image.
+  return composite_img
+
+# Update a subplot with new coda annotation data.
+# composite_img is the composite frame image to update.
+# layout_specs is (row, col, rowspan, colspan) of the subplot location.
+# coda_data is a dictionary of coda annotation information to plot.
+# current_time_s is the current epoch time for the plot.
+# coda_plot_type is 'ici' or 'tfs'.
+# codas_imagePlot is the ImagePlot object to update.
+# subplot_horizontal_alignment controls how the image is positioned within the larger subplot area.
+#   Can be 'center', 'left', 'right', or a number between 0 and 1.
+#   If a number is provided, will place the left edge of the subplot image at that fraction of the overall subplot area.
+# Returns the updated composite image.
+def update_codas_subplot(composite_img, layout_specs,
+                         coda_data, current_time_s, coda_plot_type, codas_imagePlot,
+                         subplot_horizontal_alignment='center'):
+  # Reset the plot to an empty axis.
+  codas_imagePlot.clear_plot()
+  # Plot all codas in the given window.
+  max_y_value = 0
+  for coda_index in range(len(coda_data['click_times_s'])):
+    click_times_s = coda_data['click_times_s'][coda_index]
+    click_icis_s = coda_data['click_icis_s'][coda_index]
+    whale_index = coda_data['whale_indexes'][coda_index]
+    # Create a series of symbols for each click marker.
+    symbols = [codas_plot_marker_symbol(whale_index)] * len(click_times_s)
+    if coda_plot_type == 'ici':
+      # The last click will be plotted at a fictitious ICI that copies the previous one.
+      # Use a different symbol for the last click, as a reminder that it is a fictitious ICI.
+      if len(click_icis_s) > 0:
+        click_icis_s = click_icis_s + [click_icis_s[-1]]
+      else:
+        click_icis_s = [0.0] # plot single clicks at the bottom of the graph
+      symbols[-1] = codas_plot_marker_symbol_endClick(whale_index)
+      # Plot the series of clicks at their subsequent ICI.
+      click_icis_ms = np.array(click_icis_s)*1000
+      codas_imagePlot.plot(click_times_s - current_time_s, # make time relative to current time
+                            click_icis_ms,
+                            line_thickness=codas_plot_line_thickness,
+                            color=codas_plot_whale_color(whale_index),
+                            marker_symbols=symbols,
+                            marker_size=codas_plot_marker_size(whale_index),
+                            marker_edge_thickness=codas_plot_marker_edge_width(whale_index),
+                            marker_edge_color=codas_plot_marker_edge_color(whale_index),
+                            )
+      max_y_value = max(max_y_value, max(click_icis_ms))
+    elif coda_plot_type == 'tfs':
+      # Plot the series of clicks at their time since coda start.
+      click_tfs_s = (click_times_s - click_times_s[0]) * codas_plot_tfs_scaleFactor
+      codas_imagePlot.plot(click_times_s - current_time_s,  # make time relative to current time
+                            click_tfs_s,
+                            line_thickness=codas_plot_line_thickness,
+                            color=codas_plot_whale_color(whale_index),
+                            marker_symbols=symbols,
+                            marker_size=codas_plot_marker_size(whale_index),
+                            marker_edge_thickness=codas_plot_marker_edge_width(whale_index),
+                            marker_edge_color=codas_plot_marker_edge_color(whale_index),
+                            )
+      max_y_value = max(max_y_value, max(click_tfs_s))
+  # Update the y range if using auto scaling.
+  # Note that this will take effect on the plot update rather than this one
+  #  (it will redraw the empty plot now, but the above codas have already been plotted).
+  if codas_plot_yrange[coda_plot_type] == 'auto' and len(coda_data['click_times_s']) > 0:
+    codas_imagePlot.set_y_limits([0, max_y_value*1.05])
+    codas_imagePlot.render_empty()
+  # Plot the current-time marker.
+  codas_imagePlot.plot([0, 0], codas_imagePlot.get_y_limits(), marker_symbols=None,
+                                line_thickness=codas_plot_currentTime_thickness,
+                                color=codas_plot_currentTime_color)
+  # Update the subplot with the image.
+  composite_img = update_image_subplot(composite_img, layout_specs,
+                                       codas_imagePlot.get_plot_image(),
+                                       subplot_label=None, subplot_label_outline_color=None,
+                                       subplot_horizontal_alignment=subplot_horizontal_alignment)
+  # Return the updated composite image.
+  return composite_img
+
+# Update a subplot with new drone data.
+# composite_img is the composite frame image to update.
+# layout_specs is (row, col, rowspan, colspan) of the subplot location.
+# data is a list of dictionaries, each with data to plot for a drone.
+# subplot_horizontal_alignment controls how the image is positioned within the larger subplot area.
+#   Can be 'center', 'left', 'right', or a number between 0 and 1.
+#   If a number is provided, will place the left edge of the subplot image at that fraction of the overall subplot area.
+# drone_imagePlot is the ImagePlot object to update.
+# Returns the updated composite image.
+def update_drone_subplot(composite_img, layout_specs, data,
+                         drone_imagePlot,
+                         subplot_horizontal_alignment='center'):
+  # Reset the plot to an empty axis.
+  drone_imagePlot.clear_plot()
+  # Get a list of coordinates for all drones.
+  drone_coordinates = []
+  for (drone_index, drone_data) in enumerate(data):
+    if drone_data is not None:
+      x = drone_lon_to_km(drone_data['longitude'])
+      y = drone_lat_to_km(drone_data['latitude'])
+      drone_coordinates.append([x, y])
+  if len(drone_coordinates) > 0:
+    drone_coordinates = np.array(drone_coordinates)
+    # Compute the maximum distance between any pair of drones.
+    # This will be used as a reference length when considering the plot bounds.
+    max_distance_km = np.amax(spatial.distance.cdist(drone_coordinates, drone_coordinates))
+    # Check if the existing plot limits are sufficient, and if so avoid overhead of re-rendering the empty plot.
+    x_extremes = [np.amin(drone_coordinates[:,0]), np.amax(drone_coordinates[:,0])]
+    y_extremes = [np.amin(drone_coordinates[:,1]), np.amax(drone_coordinates[:,1])]
+    x_limits = drone_imagePlot.get_x_limits()
+    y_limits = drone_imagePlot.get_y_limits()
+    x_range = drone_imagePlot.get_x_range()
+    y_range = drone_imagePlot.get_y_range()
+    existing_range_good = (x_range >= drone_plot_rangeRatio_bounds[0]*max_distance_km
+                            or y_range >= drone_plot_rangeRatio_bounds[0]*max_distance_km) \
+                          and (x_range <= drone_plot_rangeRatio_bounds[1]*max_distance_km
+                            or y_range <= drone_plot_rangeRatio_bounds[1]*max_distance_km) \
+                          and x_extremes[0] >= x_limits[0] + drone_plot_rangePad_km \
+                          and x_extremes[1] <= x_limits[1] - drone_plot_rangePad_km \
+                          and y_extremes[0] >= y_limits[0] + drone_plot_rangePad_km \
+                          and y_extremes[1] <= y_limits[1] - drone_plot_rangePad_km
+    if not existing_range_good:
+      # Compute a plot range using the distance between drones as a reference length.
+      plot_range = max(drone_plot_minRange_km, np.mean(drone_plot_rangeRatio_bounds)*max_distance_km)
+      # Keep the plot center the same, but zoom in/out according to the above range.
+      x_center = np.mean(drone_imagePlot.get_x_limits())
+      y_center = np.mean(drone_imagePlot.get_y_limits())
+      x_limits = x_center + np.array([-plot_range/2, plot_range/2])
+      y_limits = y_center + np.array([-plot_range/2, plot_range/2])
+      # Adjust limits if needed to keep the drones away from the edges by the desired padding size.
+      if x_extremes[0] < x_limits[0] + drone_plot_rangePad_km:
+        x_limits[0] = (x_extremes[0]-drone_plot_rangePad_km)
+        x_limits[1] = x_limits[0] + plot_range
+      if x_extremes[1] > x_limits[1] - drone_plot_rangePad_km:
+        x_limits[1] = (x_extremes[1]+drone_plot_rangePad_km)
+        x_limits[0] = x_limits[1] - plot_range
+      if y_extremes[0] < y_limits[0] + drone_plot_rangePad_km:
+        y_limits[0] = (y_extremes[0]-drone_plot_rangePad_km)
+        y_limits[1] = y_limits[0] + plot_range
+      if y_extremes[1] > y_limits[1] - drone_plot_rangePad_km:
+        y_limits[1] = (y_extremes[1]+drone_plot_rangePad_km)
+        y_limits[0] = y_limits[1] - plot_range
+      # Update the plot limits.
+      if np.any(x_limits != drone_imagePlot.get_x_limits()) or \
+          np.any(y_limits != drone_imagePlot.get_y_limits()):
+        drone_imagePlot.set_x_limits(x_limits)
+        drone_imagePlot.set_y_limits(y_limits)
+        drone_imagePlot.render_empty()
+  # Plot the drones.
+  for (drone_index, drone_data) in enumerate(data):
+    if drone_data is not None:
+      x = drone_lon_to_km(drone_data['longitude'])
+      y = drone_lat_to_km(drone_data['latitude'])
+      drone_plot_color_index = drone_plot_color_lookup_keys.searchsorted(drone_data['altitude_relative_m'])
+      drone_plot_color_index = min(drone_plot_color_index, drone_plot_color_lookup.shape[0]-1)
+      drone_imagePlot.plot(x, y,
+                           color=drone_plot_color_lookup[drone_plot_color_index],
+                           marker_symbols='circle',
+                           marker_size=drone_plot_symbolSize,
+                           marker_edge_thickness=drone_plot_marker_edge_thickness,
+                           marker_edge_color=drone_plot_colors[drone_index])
+  # Update the subplot with the image.
+  composite_img = update_image_subplot(composite_img, layout_specs,
+                                       drone_imagePlot.get_plot_image(),
+                                       subplot_label=None, subplot_label_outline_color=None,
+                                       subplot_horizontal_alignment=subplot_horizontal_alignment)
+  # Return the updated composite image.
+  return composite_img
+
+
+######################################################
+# INITIALIZE PLOTS
+######################################################
+
+print()
+print('Initializing plots for audio, codas, and drone data')
+
+# Will store pointers to ImagePlot objects for each device stream that needs it.
+# Will index the dictionary by layout_specs tuples since a single plot will be needed for each subplot.
+imagePlots = {}
+# Will also store the media type of each subplot.
+media_types = {}
+
+# Initialize audio visualizations.
+for (device_friendlyName, layout_specs) in composite_layout.items():
+  device_id = device_friendlyName_to_id(device_friendlyName)
+  (row, col, rowspan, colspan) = layout_specs
+  # If a plot has already been created for this subplot location, just use that one for this device too.
+  if layout_specs in imagePlots:
+    continue
+  # Skip if no media information is stored for this device (e.g. a synthetic device such as drones)
+  if device_id not in media_infos:
+    continue
+  # Load information about the stream.
+  media_file_infos = media_infos[device_id]
+  example_filepath = list(media_file_infos.keys())[0]
+  (example_timestamps_s, example_data) = media_file_infos[example_filepath]
+  # Store the media type if it is image, video, or audio:
+  if is_video(example_filepath):
+    media_types[layout_specs] = 'image'
+  elif is_image(example_filepath):
+    media_types[layout_specs] = 'image'
+  elif is_audio(example_filepath):
+    media_types[layout_specs] = 'audio'
+  # Only continue if it is an audio stream.
+  if not is_audio(example_filepath):
+    continue
+  # Create a plot for the audio data, that is set to the target size so no rescaling will be needed.
+  plt = ImagePlot(auto_update_empty_plot=False)
+  (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+  plt.set_plot_size(width=subplot_width, height=subplot_height)
+  
+  # Format the plot.
+  plt.set_padding(left=0, top=subplot_border_size, right=0, bottom=subplot_border_size)
+  plt.set_axis_left_position(width_ratio=audio_plots_left_axis_position_ratio)
+  plt.set_axis_right_position(width_ratio=audio_plots_right_axis_position_ratio)
+  plt.set_x_limits([-audio_plot_duration_beforeCurrentTime_s, audio_plot_duration_afterCurrentTime_s])
+  plt.set_x_ticks_spacing(audio_plot_x_tick_spacing['major'], audio_plot_x_tick_spacing['minor'], value_to_include=0)
+  plt.show_grid_major(x=False, y=False, thickness=audio_plot_grid_thickness['major'])
+  plt.show_tick_labels(x=(not audio_plot_hide_xlabels), y=True)
+  plt.set_x_label('Time [s]' if not audio_plot_hide_xlabels else '')
+  plt.show_box(False)
+  plt.set_font_size(size=audio_plot_font_size, yLabelHeightRatio=None)
+  plt.set_font_color(audio_plot_label_color)
+  if audio_plot_type == 'waveform':
+    plt.set_y_label('')
+  elif audio_plot_type == 'spectrogram':
+    plt.set_y_label('Frequency [kHz]')
+    plt.set_y_limits(np.array(audio_spectrogram_frequency_range)/1000)
+    plt.set_y_ticks_spacing_major(audio_spectrogram_frequency_tick_spacing_khz)
+    # Add a color bar.
+    plt.add_colorbar(audio_spectrogram_colormap,
+                     audio_spectrogram_colorbar_width_ratio,
+                     limits=audio_spectrogram_colorbar_levels,
+                     ticks=np.linspace(start=audio_spectrogram_colorbar_levels[0], stop=audio_spectrogram_colorbar_levels[1],
+                                       num=5),
+                     tick_label_format='%0.1f')
+  
+  # Render all updates to the plot formatting.
+  plt.render_empty()
+  # Store the plot to update later.
+  imagePlots[layout_specs] = plt
+  # Show the window if desired.
+  if show_visualization_window:
+    plt.show_plot(block=False, window_title=device_friendlyName)
+    cv2.imwrite('test_plot_audio_%s.jpg' % device_id, plt.get_plot_image())
+
+
+# Initialize coda visualizations.
+for coda_plot_type in ['ici', 'tfs']:
+  if len(codas_data['coda_start_times_s']) > 0 and 'Codas (%s)' % coda_plot_type.upper() in composite_layout:
+    # Find the layout for the coda plot.
+    layout_specs = composite_layout['Codas (%s)' % coda_plot_type.upper()]
+    (row, col, rowspan, colspan) = layout_specs
+    # Store the media type.
+    media_types[layout_specs] = 'codas'
+    # Create a plot for the data, that is set to the target size so no rescaling will be needed.
+    plt = ImagePlot(auto_update_empty_plot=False)
+    (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+    plt.set_plot_size(width=subplot_width, height=subplot_height)
+    # Format the plot.
+    plt.set_padding(left=0, top=subplot_border_size, right=0, bottom=subplot_border_size)
+    plt.set_axis_left_position(width_ratio=audio_plots_left_axis_position_ratio)
+    plt.set_axis_right_position(width_ratio=audio_plots_right_axis_position_ratio)
+    plt.set_x_limits([-codas_plot_duration_beforeCurrentTime_s, codas_plot_duration_afterCurrentTime_s])
+    plt.set_y_limits(codas_plot_yrange[coda_plot_type])
+    plt.show_grid_major(x=False, y=True, thickness=codas_plot_grid_thickness['major'], color=codas_plot_grid_color['major'])
+    plt.show_grid_minor(x=False, y=False, thickness=codas_plot_grid_thickness['minor'], color=codas_plot_grid_color['minor'])
+    plt.set_x_ticks_spacing(codas_plot_x_tickSpacing_s[coda_plot_type]['major'], codas_plot_x_tickSpacing_s[coda_plot_type]['minor'],
+                            value_to_include=0)
+    plt.set_y_ticks_spacing(codas_plot_y_tickSpacing[coda_plot_type]['major'], codas_plot_y_tickSpacing[coda_plot_type]['minor'],
+                            value_to_include=0)
+    plt.show_tick_labels(x=(not codas_plot_hide_xlabels[coda_plot_type]), y=True)
+    plt.set_x_label('Time [s]' if not codas_plot_hide_xlabels[coda_plot_type] else '')
+    plt.show_box(False)
+    if coda_plot_type == 'ici':
+      plt.set_y_label('Inter-Click [ms]')
+    elif coda_plot_type == 'tfs':
+      plt.set_y_label('To Coda Start [s]')
+    plt.set_font_size(size=codas_plot_font_size, yLabelHeightRatio=None)
+    plt.set_font_color(codas_plot_label_color)
+    
+    # Get visibly distinct colors for each whale index.
+    # Note that this could be done with a single simple distinctipy call,
+    #  but the below were manually tweaked to get colors that look nice and that
+    #  use more red colors for uncertain annotations.
+    whale_indexes_all = codas_data['whale_indexes']
+    unique_whale_indexes = sorted(list(OrderedDict(zip(whale_indexes_all, whale_indexes_all)).keys()))
+    unique_whale_indexes_uncertain = [x for x in unique_whale_indexes if x >= codas_uncertain_whale_index]
+    # Get colors for more 'certain' whales, which avoid red colors.
+    whale_colors_certain = [(0, 1, 0), (1, 0, 1), (1, 1, 0), (0, 1, 1), (1, 1, 1)]
+    whale_colors_certain_extra = distinctipy.get_colors(len(unique_whale_indexes) - len(unique_whale_indexes_uncertain) - len(whale_colors_certain),
+                                                        exclude_colors=[(1, 0, 0), (0, 0, 0)] + whale_colors_certain,
+                                                        rng=3,
+                                                        pastel_factor=0.5,
+                                                        n_attempts=1000)
+    whale_colors_certain_extra.reverse()
+    whale_colors_certain += whale_colors_certain_extra
+    # Get colors for 'uncertain' whales that avoids green and colors already chosen.
+    whale_colors_uncertain = distinctipy.get_colors(len(unique_whale_indexes_uncertain),
+                                                    exclude_colors=[(0, 0, 0), (0, 1, 0), (1, 1, 1)]
+                                                                   + whale_colors_certain,
+                                                    rng=6,
+                                                    pastel_factor=0.8,
+                                                    n_attempts=1000)
+    # Get a full list of whale colors, with RGB values scaled to 255 instead of 1.
+    codas_plot_unique_whale_colors = [distinctipy.get_rgb256(c) for c in whale_colors_certain + whale_colors_uncertain]
+    # Store a function that gets a whale color for a given index.
+    codas_plot_whale_color = lambda whale_index: codas_plot_unique_whale_colors[unique_whale_indexes.index(whale_index)]
+    
+    # Render all updates to the plot formatting.
+    plt.render_empty()
+    # Store the plot to update later.
+    imagePlots[layout_specs] = plt
+    # Show the window if desired.
+    if show_visualization_window:
+      plt.show_plot(block=False, window_title='Codas (%s)' % coda_plot_type.upper())
+      cv2.imwrite('test_plot_codas_%s.jpg' % coda_plot_type, plt.get_plot_image())
+      
+
+# Initialize drone data visualizations.
+if len(drone_datas) > 0 and 'Drone Positions' in composite_layout:
+  # Find the layout for the drone plot.
+  layout_specs = composite_layout['Drone Positions']
+  (row, col, rowspan, colspan) = layout_specs
+  # Store the media type.
+  media_types[layout_specs] = 'drones'
+  
+  # Create a plot for the data, that is set to the target size so no rescaling will be needed.
+  plt = ImagePlot(auto_update_empty_plot=False)
+  (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+  plt.set_plot_size(width=subplot_width, height=subplot_height)
+  
+  # Format the plot.
+  plt.set_padding(left=0, top=subplot_border_size, right=0, bottom=subplot_border_size)
+  plt.set_equal_aspect_ratio(True)
+  plt.show_grid_major(x=True, y=True, thickness=drone_plot_grid_thickness['major'])
+  plt.show_grid_minor(x=True, y=True, thickness=drone_plot_grid_thickness['minor'])
+  plt.show_box(True)
+  plt.show_tick_labels(x=True, y=True)
+  plt.set_x_label('X From Home [km]')
+  plt.set_y_label('Y From Home [km]')
+  plt.set_x_tick_label_format('%0.1f')
+  plt.set_y_tick_label_format('%0.1f')
+  plt.set_font_size(size=drone_plot_font_size, yLabelHeightRatio=None)
+  plt.set_font_color(drone_plot_label_color)
+  # Set the plot bounds and ticks.
+  (x_center, y_center) = drone_plot_reference_location_lonLat
+  x_center = drone_lon_to_km(x_center)/1000.0
+  y_center = drone_lat_to_km(y_center)/1000.0
+  x_limits = x_center + np.array([-drone_plot_minRange_km/2, drone_plot_minRange_km/2])
+  y_limits = y_center + np.array([-drone_plot_minRange_km/2, drone_plot_minRange_km/2])
+  plt.set_x_limits(x_limits)
+  plt.set_y_limits(y_limits)
+  plt.set_x_ticks_spacing(drone_plot_tickSpacing_km['major'], drone_plot_tickSpacing_km['minor'])
+  plt.set_y_ticks_spacing(drone_plot_tickSpacing_km['major'], drone_plot_tickSpacing_km['minor'])
+  
+  # Add a color bar.
+  plt.add_colorbar(drone_plot_colormap, width=drone_plot_colorbar_width_ratio,
+                   limits=drone_plot_colorbar_levels_m,
+                   ticks=np.arange(start=drone_plot_colorbar_levels_m[0], stop=drone_plot_colorbar_levels_m[1]*1.1,
+                                   step=drone_plot_colorbar_tickSpacing_m),
+                   tick_label_format='%d',
+                   label='Altitude [m]')
+  
+  # Render all updates to the plot formatting.
+  plt.render_empty()
+  # Store the plot to update later.
+  imagePlots[layout_specs] = plt
+  # Show the window if desired.
+  if show_visualization_window:
+    plt.show_plot(block=False, window_title='Drone Positions')
+    cv2.imwrite('test_plot_drones.jpg', plt.get_plot_image())
+
+######################################################
+# DUMMY COMPOSITE FRAME FOR DEBUGGING THE LAYOUT
+######################################################
+
+print()
+print('Creating a sample composite frame')
+
+# Create a dummy image that can be used to debug the visualization layout.
+composite_img_dummy = get_composite_img_blank()
+
+# Store 'blank' image data for each subplot, in case we want to use it later to clear the composite frame.
+# Not currently used, but an earlier structure of the main visualization loop used it.
+# Will use layout_specs as the key, in case multiple devices are in the same subplot.
+blank_subplot_datas = {}
+
+# Update video, image, and audio visualizations.
+for (device_friendlyName, layout_specs) in composite_layout.items():
+  device_id = device_friendlyName_to_id(device_friendlyName)
+  # If this subplot has already been updated, just use that one for this device too.
+  if layout_specs in blank_subplot_datas:
+    continue
+  # Skip if no media information is stored for this device (e.g. a synthetic device such as drones)
+  if device_id not in media_infos:
+    continue
+  # Load information about the stream.
+  media_file_infos = media_infos[device_id]
+  example_filepath = list(media_file_infos.keys())[0]
+  (example_timestamps_s, example_data) = media_file_infos[example_filepath]
+  # Create and show dummy data based on the stream type.
+  if is_video(example_filepath) or is_image(example_filepath):
+    (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+    if is_video(example_filepath):
+      example_image = load_frame(example_data, 0,
+                                 target_width=subplot_width,
+                                 target_height=subplot_height)
+    elif is_image(example_filepath):
+      example_image = load_image(example_filepath,
+                                 target_width=subplot_width,
+                                 target_height=subplot_height)
+    else:
+      raise AssertionError('Thought it was a video or image, but apparently not')
+    # Update the dummy composite image with the dummy image.
+    update_image_subplot(composite_img_dummy, layout_specs, example_image,
+                         subplot_label=device_friendlyName,
+                         subplot_label_outline_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)]
+                                                      if device_id in drone_datas else None,
+                         )
+    # Store a black image as dummy data.
+    # Make it the full size of the subplot, rather than the size of the example image,
+    #  since other data for this subplot may be a different size than this first example
+    #  (for example, if a camera has both audio and video of different sizes/orientations).
+    blank_subplot_datas[layout_specs] = np.zeros((subplot_height, subplot_width, 3), dtype=np.uint8)
+  elif is_audio(example_filepath):
+    # Generate random noise that can be used to preview the visualization.
+    random_audio = 500*np.random.normal(size=(1+int(audio_plot_duration_s*audio_resample_rate_hz), audio_num_channels_toPlot))
+    if audio_plot_type == 'waveform':
+      # Update the example composite image.
+      update_audio_subplot(composite_img_dummy, layout_specs, random_audio, imagePlots[layout_specs])
+      # Store a blank plot.
+      blank_subplot_datas[str(layout_specs)] = imagePlots[layout_specs].get_empty_plot_image()
+    elif audio_plot_type == 'spectrogram':
+      # Create a random-noise spectrogram.
+      spectrogram_f, spectrogram_t, spectrogram = \
+        signal.spectrogram(random_audio[:,0], audio_resample_rate_hz,
+                           window=signal.get_window('tukey', int(audio_spectrogram_target_window_s * audio_resample_rate_hz)),
+                           scaling='density',  # density or spectrum (default is density)
+                           nperseg=None)
+      spectrogram_colormapped = audio_spectrogram_colormap.map(spectrogram/audio_spectrogram_colorbar_levels[1])[:,:,0:3]
+      # Update the plot now with dummy data.
+      update_audio_subplot(composite_img_dummy, layout_specs, spectrogram_colormapped, imagePlots[layout_specs])
+      # Store a blank plot.
+      blank_subplot_datas[str(layout_specs)] = imagePlots[layout_specs].get_empty_plot_image()
+
+# Update drone visualizations.
+# Do the same as above but for drone data visualizations.
+if len(drone_datas) > 0 and 'Drone Positions' in composite_layout:
+  # Find the layout for the drone plot.
+  layout_specs = composite_layout['Drone Positions']
+  # Generate dummy data for each drone.
+  def get_example_drone_data():
+    return {
+      'latitude': (np.random.rand()-0.5)*0.0001 + (15.38146),
+      'longitude': (np.random.rand()-0.5)*0.0001 + (-61.48562),
+      'altitude_relative_m': (np.random.rand()-0.5)*10 + (20),
+    }
+  drone_dummy_data = [get_example_drone_data() for i in range(len(drone_datas))]
+  # Update the example composite image with the dummy data plot.
+  update_drone_subplot(composite_img_dummy, layout_specs, drone_dummy_data, imagePlots[layout_specs])
+  # Store a blank plot.
+  blank_subplot_datas[layout_specs] = imagePlots[layout_specs].get_empty_plot_image()
+
+# Update coda visualizations.
+for coda_plot_type in ['ici', 'tfs']:
+  if len(codas_data['coda_start_times_s']) > 0 and 'Codas (%s)' % coda_plot_type.upper() in composite_layout:
+    # Find the layout for the coda plot.
+    layout_specs = composite_layout['Codas (%s)' % coda_plot_type.upper()]
+    # Set dummy data as not having any codas (dict of empty lists)
+    #  at an epoch time that won't exist (0).
+    codas_dummy_data = dict([(key, []) for key in codas_data])
+    # Update the example composite image.
+    update_codas_subplot(composite_img_dummy, layout_specs,
+                         codas_dummy_data, 0, coda_plot_type, imagePlots[layout_specs])
+    # Store a blank plot.
+    blank_subplot_datas[str(layout_specs)] = imagePlots[layout_specs].get_empty_plot_image()
+
+# Show the dummy visualization frame if desired.
+if show_visualization_window or debug_composite_layout:
+  cv2.imwrite('dummy_composite_visualization_frame.jpg', cv2.cvtColor(composite_img_dummy, cv2.COLOR_BGR2RGB))
+  # Scale it to fit on more monitors.
+  cv2.imshow('Happy Birthday!', cv2.cvtColor(scale_image(composite_img_dummy, target_width=600, target_height=600), cv2.COLOR_BGR2RGB))
+  cv2.waitKey(1)
+  if debug_composite_layout:
+    cv2.waitKey(0)
+    import sys
+    sys.exit()
+
+
+######################################################
+# CREATE THE VIDEO!
 ######################################################
 
 # Generate timestamps for the output video frames.
-output_video_num_frames = output_video_duration_s * output_video_fps
+output_video_num_frames = np.ceil(output_video_duration_s * output_video_fps)
 output_video_frame_duration_s = 1/output_video_fps
 output_video_timestamps_s = output_video_start_time_s \
                             + np.arange(start=0,
                                         stop=output_video_num_frames)*output_video_frame_duration_s
-
-# if use_pyqtgraph_subplots:
-#   # # The below will make the background white if desired (the default is black).
-#   # pyqtgraph.setConfigOption('background', 'w')
-#   # pyqtgraph.setConfigOption('foreground', 'k')
-#
-#   # Define a helper to update a subplot with new device data.
-#   # layout_widget is the item to update, such as an image view or an audio plot.
-#   # layout_specs is (row, col, rowspan, colspan) of the subplot location.
-#   # data is an image or audio data.
-#   # label is text to write on an image if desired.
-#   def update_subplot(layout_widget, layout_specs, data, label=None):
-#     if is_image(data[0]):
-#       data = data[0]
-#       # Draw text on the image if desired.
-#       # Note that this is done after scaling, since scaling the text could make it unreadable.
-#       if label is not None:
-#         draw_text_on_image(data, label, pos=(0,-1),
-#                            font_scale=0.5, font_thickness=1, font=cv2.FONT_HERSHEY_SIMPLEX)
-#       # Update the subplot with the image.
-#       pixmap = cv2_to_pixmap(data)
-#       layout_widget.setPixmap(pixmap)
-#
-#     elif is_audio(data[0]):
-#       if audio_plot_waveform:
-#         data = data[0]
-#         (audio_plotWidget, h_lines) = layout_widget
-#         # Update the line items with the new data.
-#         for channel_index in range(audio_num_channels_toPlot):
-#           h_lines[channel_index].setData(audio_timestamps_toPlot_s, data[:,channel_index])
-#         # Plot a vertical current time marker, and update the y range.
-#         if np.amax(data) < 50:
-#           h_lines[-1].setData([0, 0], np.amax(data)*np.array([-50, 50]))
-#           audio_plotWidget.setYRange(-50, 50) # avoid zooming into an empty plot
-#         else:
-#           h_lines[-1].setData([0, 0], np.amax(data)*np.array([-1, 1]))
-#           audio_plotWidget.enableAutoRange(enable=0.9) # allow automatic scaling that shows 90% of the data
-#       elif audio_plot_spectrogram:
-#         (audio_plotWidget, h_heatmap, h_colorbar) = layout_widget
-#         (spectrogram, t_ticks, f_ticks, colorbar_levels) = data
-#         colorbar_levels = colorbar_levels.copy()
-#         colorbar_levels[-1] = min(np.amax(spectrogram), colorbar_levels[-1])
-#         # Add the current-time marker.
-#         spectrogram_toPlot = spectrogram.copy()
-#         spectrogram_toPlot[:, audio_plot_length_beforeCurrentTime] = colorbar_levels[-1]
-#         # Update the heatmap and colorbar.
-#         h_heatmap.setImage(spectrogram_toPlot.T)
-#         h_colorbar.setLevels(colorbar_levels)
-#
-#   # Create the plotting layout.
-#
-#   # Store the widgets/plots, and dummy data for each one so it can be cleared when no device data is available.
-#   # Will use layout_specs as the key, in case multiple devices are in the same subplot.
-#   layout_widgets = {}
-#   dummy_datas = {}
-#   # Initialize the layout.
-#   # The top level will be a GraphicsLayout, since that seems easier to export to an image.
-#   # Then the main level will be a GridLayout to flexibly arrange the visualized data streams.
-#   app = QtWidgets.QApplication([])
-#   graphics_layout = pyqtgraph.GraphicsLayoutWidget()
-#   grid_layout = QtWidgets.QGridLayout()
-#   graphics_layout.setLayout(grid_layout)
-#   # Initialize the visualizations for each stream.
-#   for (device_friendlyName, layout_specs) in composite_layout.items():
-#     device_id = device_friendlyName_to_id(device_friendlyName)
-#     (row, col, rowspan, colspan) = layout_specs
-#     # If a widget has already been created for this subplot location, just use that one for this device too.
-#     if str(layout_specs) in layout_widgets:
-#       continue
-#     # Load information about the stream.
-#     media_file_infos = media_infos[device_id]
-#     example_filepath = list(media_file_infos.keys())[0]
-#     (example_timestamps_s, example_data) = media_file_infos[example_filepath]
-#     # Create a layout based on the data type.
-#     if is_video(example_filepath) or is_image(example_filepath):
-#       if is_video(example_filepath):
-#         success, example_image = load_frame(example_data, 0,
-#                                             target_width=composite_layout_column_width*colspan,
-#                                             target_height=composite_layout_row_height*rowspan)
-#       elif is_image(example_filepath):
-#         example_image = load_image(example_filepath,
-#                                    target_width=composite_layout_column_width*colspan,
-#                                    target_height=composite_layout_row_height*rowspan)
-#       else:
-#         raise AssertionError('Thought it was a video or image, but apparently not')
-#       # Create a gray image the size of the real image that can be used to see the composite layout.
-#       blank_image = 100*np.ones_like(example_image)
-#       # Create a widget to show the image, that is set to the target height.
-#       image_labelWidget = QtWidgets.QLabel()
-#       grid_layout.addWidget(image_labelWidget, *layout_specs,
-#                             alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
-#       grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
-#       update_subplot(image_labelWidget, layout_specs, [blank_image])
-#       # Store the widget and a black image as dummy data.
-#       layout_widgets[str(layout_specs)] = image_labelWidget
-#       dummy_datas[str(layout_specs)] = [0*blank_image]
-#     elif is_audio(example_filepath):
-#       # Create a plot for the audio data, that is set to the target height.
-#       audio_plotWidget = pyqtgraph.PlotWidget()
-#       grid_layout.addWidget(audio_plotWidget, *layout_specs, alignment=pyqtgraph.QtCore.Qt.AlignmentFlag.AlignCenter)
-#       grid_layout.setRowMinimumHeight(layout_specs[0], composite_layout_row_height)
-#       # Generate random noise that can be used to preview the visualization layout.
-#       random_audio = 500*np.random.normal(size=(1+int(audio_plot_duration_s*audio_resample_rate_hz), audio_num_channels_toPlot))
-#       # Ensure the widget fills the width of the entire allocated region of subplots.
-#       audio_plotWidget.setMinimumWidth(composite_layout_column_width*layout_specs[3])
-#       # Plot the dummy data, and store handles so the plot can be updated later.
-#       if audio_plot_waveform:
-#         h_lines = []
-#         for channel_index in range(audio_num_channels_toPlot):
-#           h_lines.append(audio_plotWidget.plot(audio_timestamps_toPlot_s, random_audio[:,channel_index],
-#                                                pen=audio_waveform_plot_pens[channel_index]))
-#         h_lines.append(audio_plotWidget.plot([0, 0], [-500, 500], pen=pyqtgraph.mkPen([0, 150, 150], width=7)))
-#         # Store the plot and line handles.
-#         layout_widgets[str(layout_specs)] = (audio_plotWidget, h_lines)
-#         # Store dummy data.
-#         dummy_datas[str(layout_specs)] = [0*random_audio]
-#       elif audio_plot_spectrogram:
-#         # Assumes one channel for now
-#         # Create a random-noise spectrogram.
-#         spectrogram_f, spectrogram_t, spectrogram = \
-#           signal.spectrogram(random_audio[:,0], audio_resample_rate_hz,
-#                              window=signal.get_window('tukey', int(audio_spectrogram_window_s*audio_resample_rate_hz)),
-#                              scaling='density', # density or spectrum (default is density)
-#                              nperseg=None)
-#         # Use the formatting from the example spectrogram.
-#         (_, t_ticks, f_ticks, colorbar_levels) = example_data
-#         # Plot the spectrogram.
-#         h_heatmap = pyqtgraph.ImageItem(image=spectrogram.T, hoverable=False)
-#         audio_plotWidget.addItem(h_heatmap)
-#         audio_plotWidget.showAxis('bottom')
-#         audio_plotWidget.showAxis('left')
-#         audio_plotWidget.getAxis('left').setTicks([f_ticks])
-#         audio_plotWidget.getAxis('bottom').setTicks([t_ticks])
-#         audio_plotWidget.getAxis('bottom').setLabel('Time [s]')
-#         audio_plotWidget.getAxis('left').setLabel('Frequency [kHz]')
-#         # Force an update of the window size (double-check if this is needed?)
-#         graphics_layout.show()
-#         graphics_layout.hide()
-#         # h_plot.setAspectLocked(True)
-#         h_colorbar = audio_plotWidget.addColorBar(h_heatmap, colorMap=audio_spectrogram_colormap, interactive=False)
-#         # Store the various handles to update later.
-#         layout_widgets[str(layout_specs)] = (audio_plotWidget, h_heatmap, h_colorbar)
-#         # Update the plot now, to set formatting such as colorbar levels.
-#         update_subplot(layout_widgets[str(layout_specs)], layout_specs, (spectrogram, t_ticks, f_ticks, colorbar_levels))
-#         # Store dummy data.
-#         dummy_datas[str(layout_specs)] = (0*spectrogram, t_ticks, f_ticks, colorbar_levels)
-#
-#   # Draw the visualization with dummy data.
-#   QtCore.QCoreApplication.processEvents()
-#   graphics_layout.setWindowTitle('Happy Birthday!')
-#   if show_visualization_window or debug_composite_layout:
-#     graphics_layout.show()
-#     if debug_composite_layout:
-#       app.exec()
-#       import sys
-#       sys.exit()
-
-######################################################
-# Alternative option using OpenCV instead of PyQtGraph for the subplotting/layout
-
-if use_opencv_subplots:
-  
-  # Define a helper to update a subplot with new device data.
-  # composite_img is the composite frame image to update.
-  # layout_specs is (row, col, rowspan, colspan) of the subplot location.
-  # data is an image or audio data.
-  # image_label is text to write on an image if desired.
-  # audio_graphics_layout and plot_handles are the audio/drone plot items if updating audio/drones.
-  d, d01, d02, d03, d04, d05 = (0,0,0,0,0,0)
-  def update_subplot(composite_img, layout_specs, data,
-                     subplot_label=None, subplot_label_color=None,
-                     subplot_horizontal_alignment='center',
-                     plot_handles=None):
-    global d, d01, d02, d03, d04, d05
-    if data[0] == 'image':
-      data = data[1]
-      # Update the subplot within the image.
-      # t00 = time.time()
-      subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data, horizontal_alignment=subplot_horizontal_alignment)
-      composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
-      # t01 = time.time()
-      # d01 += t01 - t00
-      # Draw text on the subplot if desired.
-      # Note that this is done after scaling, since scaling the text could make it unreadable.
-      if subplot_label is not None:
-        subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs)
-        subplot_img = composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]]
-        # Test the width of the text on the image/subplot.
-        pos = (0, -1) # bottom left corner
-        text_width_ratio = None # use the specified font instead of scaling based on width
-        font_thickness = 1#2 if subplot_label_color is not None else 1
-        font_scale = 0.9
-        (text_w, text_h, _) = draw_text_on_image(subplot_img, subplot_label, pos=pos,
-                               font_scale=font_scale, font_thickness=font_thickness,
-                               font=cv2.FONT_HERSHEY_SIMPLEX,
-                               text_width_ratio=text_width_ratio,
-                               text_bg_color=None,
-                               text_bg_outline_color=subplot_label_color,
-                               text_color=None,
-                               # text_bg_color=None,
-                               # text_color=subplot_label_color,
-                               # text_bg_color=subplot_label_color,
-                               # text_color=None if subplot_label_color is None else (0, 0, 0),
-                               preview_only=True)
-        # t02 = time.time()
-        # d02 += t02 - t01
-        # If the text can fit on the data image, draw it there directly.
-        if text_w <= subplot_img.shape[1] and text_w <= data.shape[1]:
-          draw_text_on_image(data, subplot_label, pos=pos,
-                             font_scale=font_scale, font_thickness=font_thickness,
-                             font=cv2.FONT_HERSHEY_SIMPLEX,
-                             text_width_ratio=text_width_ratio,
-                             text_bg_color=None,
-                             text_bg_outline_color=subplot_label_color,
-                             text_color=None)
-                             # text_bg_color=None,
-                             # text_color=subplot_label_color)
-                             # text_bg_color=subplot_label_color,
-                             # text_color=None if subplot_label_color is None else (0, 0, 0))
-          # Update the composite image with the new subplot image.
-          subplot_indexes = get_slice_indexes_for_subplot_update(layout_specs, data, horizontal_alignment=subplot_horizontal_alignment)
-          composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = data
-          # t03 = time.time()
-          # d03 += t03 - t02
-        # Otherwise, draw it on the subplot so there is more room.
-        else:
-          # If the text is larger than the subplot, scale it to fit.
-          if text_w > subplot_img.shape[1]:
-            text_width_ratio = 0.9
-          # If the text is larger than the image, center it in the subplot.
-          elif text_w > data.shape[1]:
-            pos = (0.5, -1)
-          # Add the text.
-          draw_text_on_image(subplot_img, subplot_label, pos=pos,
-                             font_scale=font_scale, font_thickness=font_thickness,
-                             font=cv2.FONT_HERSHEY_SIMPLEX,
-                             text_width_ratio=text_width_ratio,
-                             text_bg_color=None,
-                             text_bg_outline_color=subplot_label_color,
-                             text_color=None)
-                             # text_bg_color=None,
-                             # text_color=subplot_label_color)
-                             # text_bg_color=subplot_label_color,
-                             # text_color=None if subplot_label_color is None else (0, 0, 0))
-          # Update the composite image with the new subplot image.
-          composite_img[subplot_indexes[0]:subplot_indexes[1], subplot_indexes[2]:subplot_indexes[3]] = subplot_img
-          # t04 = time.time()
-          # d04 += t04 - t02
-      # t05 = time.time()
-      # d += t05 - t00
-
-    elif data[0] in ['audio', 'spectrogram']:
-      if audio_plot_waveform:
-        data = data[1]
-        (audio_imagePlot,) = plot_handles
-        # Update the line items with the new data.
-        audio_imagePlot.clear_plot()
-        # Update the y limits.
-        if np.amax(data) < 50:
-          y_limits = [-50, 50] # avoid zooming into an empty plot
-        else:
-          y_limits = np.quantile(data, 0.95)*np.array([-1, 1])
-        audio_imagePlot.set_y_ticks_major(y_limits[1]*np.array([-1, 0, 1]))
-        audio_imagePlot.set_y_limits(y_limits) # also re-renders the empty plot
-        for channel_index in range(audio_num_channels_toPlot):
-          audio_imagePlot.plot_line(audio_timestamps_toPlot_s, data[:,channel_index],
-                                    line_thickness=audio_waveform_line_thicknesses[channel_index],
-                                    color=audio_waveform_plot_colors[channel_index],
-                                    marker_symbols=None)
-        # Plot a vertical current time marker.
-        if np.amax(data) < 50:
-          audio_imagePlot.plot_line([0, 0], [-50, 50], marker_symbols=None,
-                                    line_thickness=audio_waveform_plot_currentTime_thickness,
-                                    color=audio_waveform_plot_currentTime_color)
-        else:
-          audio_imagePlot.plot_line([0, 0], np.amax(data)*np.array([-1, 1]), marker_symbols=None,
-                                    line_thickness=audio_waveform_plot_currentTime_thickness,
-                                    color=audio_waveform_plot_currentTime_color)
-        # Update the subplot with the image.
-        composite_img = update_subplot(composite_img, layout_specs, ['image', audio_imagePlot.get_plot_image()],
-                                       subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
-      elif audio_plot_spectrogram:
-        # t00 = time.time()
-        (audio_imagePlot,) = plot_handles
-        # spectrogram_colormapped = data[1]
-        # t01 = time.time()
-        # Update the heatmap.
-        audio_imagePlot.clear_plot()
-        # t02 = time.time()
-        audio_imagePlot.plot_image(data[1])
-        # t03 = time.time()
-        # Add the current-time marker.
-        audio_imagePlot.plot_line([0, 0], audio_imagePlot.get_y_limits(), marker_symbols=None,
-                                    line_thickness=audio_spectrogram_plot_currentTime_thickness,
-                                    color=audio_spectrogram_plot_currentTime_color)
-        # t04 = time.time()
-        # Update the subplot with the image.
-        composite_img = update_subplot(composite_img, layout_specs, ['image', audio_imagePlot.get_plot_image()],
-                                       subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
-        # t05 = time.time()
-        # di = t05 - t00
-        # d += t05 - t00
-        # d01 += t01 - t00
-        # d02 += t02 - t01
-        # d03 += t03 - t02
-        # d04 += t04 - t03
-        # d05 += t05 - t04
-        # print('%0.5f | %4.1f%% %4.1f%% %4.1f%% %4.1f%% %4.1f%%' % (di, 100*(t01-t00)/di, 100*(t02-t01)/di, 100*(t03-t02)/di, 100*(t04-t03)/di, 100*(t05-t04)/di))
-        
-    elif data[0] == 'drone':
-      data = data[1]
-      (drone_imagePlot,) = plot_handles
-      drone_imagePlot.clear_plot()
-      # Update the plot range.
-      drone_coordinates = []
-      for (drone_index, drone_data) in enumerate(data):
-        if ('is_dummy_data' not in drone_data) or (not drone_data['is_dummy_data']):
-          x = drone_lon_to_m(drone_data['longitude'])
-          y = drone_lat_to_m(drone_data['latitude'])
-          drone_coordinates.append([x, y])
-      if len(drone_coordinates) > 0:
-        drone_coordinates = np.array(drone_coordinates)
-        max_distance_m = np.amax(spatial.distance.cdist(drone_coordinates, drone_coordinates))
-        plot_range = max(drone_plot_minRange_m, 2*max_distance_m)
-        x_extremes = [np.amin(drone_coordinates[:,0]), np.amax(drone_coordinates[:,0])]
-        y_extremes = [np.amin(drone_coordinates[:,1]), np.amax(drone_coordinates[:,1])]
-        x_center = np.mean(drone_imagePlot.get_x_limits())
-        y_center = np.mean(drone_imagePlot.get_y_limits())
-        x_limits = x_center + np.array([-plot_range/2, plot_range/2])
-        y_limits = y_center + np.array([-plot_range/2, plot_range/2])
-        if x_extremes[0] < x_limits[0] + drone_plot_rangePad:
-          x_limits[0] = (x_extremes[0] - drone_plot_rangePad)
-          x_limits[1] = x_limits[0] + plot_range
-        if x_extremes[1] > x_limits[1] - drone_plot_rangePad:
-          x_limits[1] = (x_extremes[1] + drone_plot_rangePad)
-          x_limits[0] = x_limits[1] - plot_range
-        if y_extremes[0] < y_limits[0] + drone_plot_rangePad:
-          y_limits[0] = (y_extremes[0] - drone_plot_rangePad)
-          y_limits[1] = y_limits[0] + plot_range
-        if y_extremes[1] > y_limits[1] - drone_plot_rangePad:
-          y_limits[1] = (y_extremes[1] + drone_plot_rangePad)
-          y_limits[0] = y_limits[1] - plot_range
-        drone_imagePlot.set_x_limits(x_limits) # also re-renders the empty plot
-        drone_imagePlot.set_y_limits(y_limits) # also re-renders the empty plot
-        drone_imagePlot.render_empty()
-      # Set the lines to the new data points.
-      for (drone_index, drone_data) in enumerate(data):
-        x = drone_lon_to_m(drone_data['longitude'])
-        y = drone_lat_to_m(drone_data['latitude'])
-        drone_plot_color_index = drone_plot_color_lookup_keys.searchsorted(drone_data['altitude_relative_m'])
-        drone_plot_color_index = min(drone_plot_color_index, drone_plot_color_lookup.shape[0]-1)
-        if ('is_dummy_data' not in drone_data) or (not drone_data['is_dummy_data']):
-          drone_imagePlot.plot_line(x, y,
-                  color=drone_plot_color_lookup[drone_plot_color_index],
-                  marker_symbols='circle',
-                  marker_size=drone_plot_symbolSize,
-                  marker_edge_thickness=drone_plot_marker_edge_thickness,
-                  marker_edge_color=np.flip(drone_plot_colors[drone_index]))
-      # Update the subplot with the image.
-      composite_img = update_subplot(composite_img, layout_specs, ['image', drone_imagePlot.get_plot_image()],
-                                     subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
-    
-    elif data[0] == 'codas':
-      t00 = time.time()
-      (coda_data, current_time_s, coda_plot_type) = data[1]
-      (codas_imagePlot,) = plot_handles
-      codas_imagePlot.clear_plot()
-      d01 += time.time() - t00
-      # Plot all codas in the given window.
-      max_y_value = 0
-      for coda_index in range(len(coda_data['click_times_s'])):
-        t01 = time.time()
-        click_times_s = coda_data['click_times_s'][coda_index]
-        click_icis_s = coda_data['click_icis_s'][coda_index]
-        whale_index = coda_data['whale_indexes'][coda_index]
-        symbols = [codas_plot_get_symbol(whale_index)] * len(click_times_s)
-        symbols[-1] = codas_plot_get_symbol_endClick(whale_index)
-        whale_pen = whale_pens[unique_whale_indexes.index(whale_index)]
-        whale_color = whale_colors[unique_whale_indexes.index(whale_index)]
-        whale_symbol_pen = whale_symbol_pens[unique_whale_indexes.index(whale_index)]
-        symbol_size = codas_plot_get_symbol_size(whale_index)
-        d02 += time.time() - t01
-        t01 = time.time()
-        if coda_plot_type == 'ici':
-          if len(click_icis_s) > 0:
-            click_icis_s = click_icis_s + [click_icis_s[-1]] # the last click will be plotted at a fictitious ICI that copies the previous one
-          else:
-            click_icis_s = [0.0] # plot single clicks at the bottom of the graph
-          codas_imagePlot.plot_line(click_times_s - current_time_s,  # make time relative to current time
-                                    np.array(click_icis_s)*1000,  # convert to milliseconds
-                                    line_thickness=codas_plot_pen_width,
-                                    color=whale_color,
-                                    marker_symbols=symbols,
-                                    marker_size=symbol_size,
-                                    marker_edge_thickness=codas_plot_symbolPen_width_certain if whale_index < 20 else codas_plot_symbolPen_width_uncertain,
-                                    marker_edge_color=codas_plot_symbolPen_outlineColor_certain if whale_index < 20 else codas_plot_symbolPen_outlineColor_uncertain,
-                                    )
-          max_y_value = max(max_y_value, max(np.array(click_icis_s)*1000))
-        elif coda_plot_type == 'tfs':
-          codas_imagePlot.plot_line(click_times_s - current_time_s,  # make time relative to current time
-                                    (click_times_s - click_times_s[0]) * codas_plot_tfs_scaleFactor,
-                                    line_thickness=codas_plot_pen_width,
-                                    color=whale_color,
-                                    marker_symbols=symbols,
-                                    marker_size=symbol_size,
-                                    marker_edge_thickness=codas_plot_symbolPen_width_certain if whale_index < 20 else codas_plot_symbolPen_width_uncertain,
-                                    marker_edge_color=codas_plot_symbolPen_outlineColor_certain if whale_index < 20 else codas_plot_symbolPen_outlineColor_uncertain,
-                                    )
-          max_y_value = max(max_y_value, max((click_times_s - click_times_s[0]) * codas_plot_tfs_scaleFactor))
-        d03 += time.time() - t01
-      # Update the y range if using auto scaling.
-      # Note that this will take effect on the next loop (it will redraw the empty plot now).
-      if codas_plot_yrange[coda_plot_type] == 'auto':
-        if len(coda_data['click_times_s']) == 0:
-          codas_imagePlot.set_y_limits([-0.2, 1.2])
-        else:
-          codas_imagePlot.set_y_limits([0, max_y_value*1.05])
-      # Plot the current-time marker.
-      t03 = time.time()
-      codas_imagePlot.plot_line([0, 0], codas_imagePlot.get_y_limits(), marker_symbols=None,
-                                    line_thickness=codas_plot_currentTime_thickness,
-                                    color=codas_plot_currentTime_color)
-      d04 += time.time() - t03
-      # Update the subplot with the image.
-      t03 = time.time()
-      composite_img = update_subplot(composite_img, layout_specs, ['image', codas_imagePlot.get_plot_image()],
-                                     subplot_label=subplot_label, subplot_horizontal_alignment=subplot_horizontal_alignment)
-      d05 += time.time() - t03
-      d += time.time() - t00
-      
-    return composite_img
-
-  # Create the blank image to use as the background.
-  composite_img_blank = np.zeros(shape=(output_video_height, output_video_width, 3), dtype=np.uint8)
-  composite_img_dummy = composite_img_blank.copy()
-
-  # Store dummy data for each subplot so it can be cleared when no device data is available.
-  # Also store the widgets/plots for each audio visualization so they can be updated later.
-  # Will use layout_specs as the key, in case multiple devices are in the same subplot.
-  audio_plot_handles = {}
-  dummy_datas = {}
-  # Initialize the visualizations for each stream.
-  for (device_friendlyName, layout_specs) in composite_layout.items():
-    device_id = device_friendlyName_to_id(device_friendlyName)
-    (row, col, rowspan, colspan) = layout_specs
-    # If a widget has already been created for this subplot location, just use that one for this device too.
-    if str(layout_specs) in dummy_datas:
-      continue
-    # Skip if no media information is stored for this device (e.g. a synthetic device such as drones)
-    if device_id not in media_infos:
-      continue
-    # Load information about the stream.
-    media_file_infos = media_infos[device_id]
-    example_filepath = list(media_file_infos.keys())[0]
-    (example_timestamps_s, example_data) = media_file_infos[example_filepath]
-    # Create a layout and dummy data based on the stream type.
-    if is_video(example_filepath) or is_image(example_filepath):
-      (subplot_width, subplot_height) = get_subplot_size(layout_specs)
-      if is_video(example_filepath):
-        success, example_image = load_frame(example_data, 0,
-                                            target_width=subplot_width,
-                                            target_height=subplot_height)
-      elif is_image(example_filepath):
-        example_image = load_image(example_filepath,
-                                   target_width=subplot_width,
-                                   target_height=subplot_height)
-      else:
-        raise AssertionError('Thought it was a video or image, but apparently not')
-      # Create a gray image the size of the real image that can be used to see the composite layout.
-      blank_image = 100*np.ones_like(example_image)
-      # Update the dummy composite image with the dummy image.
-      update_subplot(composite_img_dummy, layout_specs, ['image', example_image],
-                     subplot_label=device_friendlyName,
-                     subplot_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
-      # Store a black image as dummy data.
-      # Make it the full size of the subplot, rather than the size of the example image,
-      #  since other data for this subplot may be a different size than this first example
-      #  (for example, if a camera has both audio and video of different sizes/orientations).
-      dummy_datas[str(layout_specs)] = ['image', np.zeros((subplot_height, subplot_width, 3), dtype=np.uint8)]
-    elif is_audio(example_filepath):
-      (subplot_width, subplot_height) = get_subplot_size(layout_specs)
-      # Create a plot for the audio data, that is set to the target size.
-      plt = ImagePlot(auto_update_empty_plot=False)
-      plt.set_plot_size(width=subplot_width, height=subplot_height)
-      plt.set_padding(left=0, top=subplot_border_size, right=0, bottom=subplot_border_size)
-      plt.show_box(False)
-      plt.set_font_size(size=audio_plot_font_size, yLabelHeightRatio=None)
-      plt.set_font_color(audio_plot_label_color)
-      plt.set_x_limits([-audio_plot_duration_beforeCurrentTime_s, audio_plot_duration_afterCurrentTime_s])
-      plt.set_x_ticks_spacing(**audio_plot_x_tick_spacing, value_to_include=0)
-      plt.show_grid_major(x=False, y=False, thickness=audio_plot_grid_thickness['major'])
-      plt.show_tick_labels(x=(not audio_plot_hide_xlabels), y=True)
-      plt.set_x_label('Time [s]' if not audio_plot_hide_xlabels else '')
-      
-      # Generate random noise that can be used to preview the visualization layout.
-      random_audio = 500*np.random.normal(size=(1+int(audio_plot_duration_s*audio_resample_rate_hz), audio_num_channels_toPlot))
-      if audio_plot_waveform:
-        plt.set_y_label('')
-        # Store the image plot.
-        audio_plot_handles[str(layout_specs)] = (plt,)
-        # Render all updates to the plot formatting.
-        plt.render_empty()
-        # Update the example composite image.
-        update_subplot(composite_img_dummy, layout_specs, ['audio', random_audio],
-                       subplot_label=None,
-                       plot_handles=audio_plot_handles[str(layout_specs)])
-        # Store dummy data.
-        dummy_datas[str(layout_specs)] = ['audio', 0*random_audio]
-      elif audio_plot_spectrogram:
-        # Assumes one channel for now
-        # Create a random-noise spectrogram.
-        spectrogram_f, spectrogram_t, spectrogram = \
-          signal.spectrogram(random_audio[:,0], audio_resample_rate_hz,
-                             window=signal.get_window('tukey', int(audio_spectrogram_target_window_s * audio_resample_rate_hz)),
-                             scaling='density',  # density or spectrum (default is density)
-                             nperseg=None)
-        spectrogram_colormapped = audio_spectrogram_colormap.map(spectrogram/audio_spectrogram_colorbar_levels[1])[:,:,0:3]
-        # Update plot formatting.
-        plt.set_y_label('Frequency [kHz]')
-        plt.set_y_limits(np.array(audio_spectrogram_frequency_range)/1000)
-        plt.set_y_ticks_spacing_major(audio_spectrogram_frequency_tick_spacing_khz)
-        if coda_annotations_plot_align_with_spectrogram_above:
-          plt.set_axis_left_position(width_ratio=audio_coda_plots_left_axis_position_ratio)
-          plt.set_axis_right_position(width_ratio=audio_coda_plots_right_axis_position_ratio)
-        plt.set_padding(left=0, top=0, right=0, bottom=0)
-        # Add a colorbar.
-        plt.add_colorbar(audio_spectrogram_colormap,
-                         audio_spectrogram_colorbar_width,
-                         limits=audio_spectrogram_colorbar_levels,
-                         ticks=np.linspace(start=audio_spectrogram_colorbar_levels[0], stop=audio_spectrogram_colorbar_levels[1],
-                                           num=5),
-                         tick_label_format='%0.1f')
-        # Store the various handles to update later.
-        audio_plot_handles[str(layout_specs)] = (plt,)
-        # Render all updates to the plot formatting.
-        plt.render_empty()
-        # Update the plot now with dummy data.
-        update_subplot(composite_img_dummy, layout_specs, ('spectrogram', spectrogram_colormapped),
-                       subplot_label=None,
-                       plot_handles=audio_plot_handles[str(layout_specs)])
-        # Store dummy data.
-        dummy_datas[str(layout_specs)] = ('spectrogram', 0*spectrogram_colormapped)
-      # Show the window if desired.
-      if show_visualization_window:
-        plt.show_plot(block=False, window_title='Sound Plotting!')
-        cv2.imwrite('test_plot_spectrogram.jpg', plt.get_plot_image())
-        print('sound plotting', plt.get_plot_image().shape)
-
-  # Do the same as above but for drone data visualizations.
-  drone_plot_handles = None
-  num_drone_datas = len(drone_datas)
-  if num_drone_datas > 0 and 'Drone Positions' in composite_layout:
-    # Find the layout for the drone plot.
-    drone_data_layout_specs = composite_layout['Drone Positions']
-    (row, col, rowspan, colspan) = drone_data_layout_specs
-    (subplot_width, subplot_height) = get_subplot_size(drone_data_layout_specs)
-    # Create a plot for the data, that is set to the target size.
-    plt = ImagePlot(auto_update_empty_plot=False)
-    plt.set_plot_size(width=subplot_width, height=subplot_height)
-    plt.set_padding(left=0, top=subplot_border_size, right=0, bottom=subplot_border_size)
-    plt.show_box(False)
-    plt.set_equal_aspect_ratio(True)
-    plt.set_font_size(size=drone_plot_font_size, yLabelHeightRatio=None)
-    plt.set_font_color(drone_plot_label_color)
-    plt.show_grid_major(x=True, y=True, thickness=drone_plot_grid_thickness['major'])
-    plt.show_grid_minor(x=True, y=True, thickness=drone_plot_grid_thickness['minor'])
-    plt.show_box(True)
-    plt.show_tick_labels(x=True, y=True)
-    plt.set_x_label('X From Home [m]')
-    plt.set_y_label('Y From Home [m]')
-    
-    # Set the plot bounds and ticks.
-    (x_center, y_center) = drone_plot_reference_location_lonLat
-    x_center = drone_lon_to_m(x_center)
-    y_center = drone_lat_to_m(y_center)
-    x_limits = x_center + np.array([-drone_plot_minRange_m/2, drone_plot_minRange_m/2])
-    y_limits = y_center + np.array([-drone_plot_minRange_m/2, drone_plot_minRange_m/2])
-    plt.set_x_limits(x_limits)
-    plt.set_y_limits(y_limits)
-    plt.set_x_ticks_spacing(**drone_plot_tickSpacing_m)
-    plt.set_y_ticks_spacing(**drone_plot_tickSpacing_m)
-    # Adjust the label fonts.
-    plt.set_font_size(drone_plot_font_size)
-    plt.set_font_color(drone_plot_label_color)
-    
-    # Add a colorbar.
-    plt.add_colorbar(drone_plot_colormap, width=drone_plot_colorbar_width,
-                     limits=drone_plot_colorbar_levels,
-                     ticks=np.arange(start=drone_plot_colorbar_levels[0], stop=drone_plot_colorbar_levels[1],
-                                     step=drone_colorbar_tickSpacing_m),
-                     tick_label_format='%d',
-                     label='Altitude [m]')
-    
-    # Generate dummy data for each drone.
-    def get_example_drone_data():
-      return {
-        'latitude': (np.random.rand()-0.5)*0.0001 + (15.38146),
-        'longitude': (np.random.rand()-0.5)*0.0001 + (-61.48562),
-        'altitude_relative_m': (np.random.rand()-0.5)*10 + (20),
-      }
-    drone_dummy_data = [get_example_drone_data() for i in range(num_drone_datas)]
-    # Store the line handles.
-    drone_plot_handles = (plt,)
-    # Render all updates to the plot formatting.
-    plt.render_empty()
-    # Update the example composite image with the dummy data plot.
-    update_subplot(composite_img_dummy, drone_data_layout_specs, ['drone', drone_dummy_data],
-                   subplot_label=None,
-                   plot_handles=drone_plot_handles)
-    # Store the dummy data.
-    # Add a marker to indicate that it is dummy data.
-    for (drone_index, dummy_data) in enumerate(drone_dummy_data):
-      drone_dummy_data[drone_index]['is_dummy_data'] = True
-    dummy_datas[str(drone_data_layout_specs)] = ['drone', drone_dummy_data]
-    # Show the window if desired.
-    if show_visualization_window:
-      plt.show_plot(block=False, window_title='Plots drone on and on')
-      cv2.imwrite('test_plot_drones.jpg', plt.get_plot_image())
-
-  # Do the same as above but for coda annotations visualizations.
-  num_codas = len(codas_data['coda_start_times_s'])
-  codas_plot_handles = {'ici': None, 'tfs': None}
-  codas_graphics_layout = {'ici': None, 'tfs': None}
-  for coda_plot_type in ['ici', 'tfs']:
-    if num_codas > 0 and 'Codas (%s)' % coda_plot_type.upper() in composite_layout:
-      # Find the layout for the coda plot.
-      codas_layout_specs = composite_layout['Codas (%s)' % coda_plot_type.upper()]
-      (row, col, rowspan, colspan) = codas_layout_specs
-      (subplot_width, subplot_height) = get_subplot_size(codas_layout_specs)
-      # Create a plot for the data, that is set to the target size.
-      plt = ImagePlot(auto_update_empty_plot=False)
-      plt.set_plot_size(width=subplot_width, height=subplot_height)
-      if coda_annotations_plot_align_with_spectrogram_above:
-        plt.set_axis_left_position(width_ratio=audio_coda_plots_left_axis_position_ratio)
-        plt.set_axis_right_position(width_ratio=audio_coda_plots_right_axis_position_ratio)
-      plt.set_padding(left=0, top=subplot_border_size, right=0, bottom=subplot_border_size)
-      plt.show_box(False)
-      plt.set_font_size(size=codas_plot_font_size, yLabelHeightRatio=None)
-      plt.set_font_color(codas_plot_label_color)
-      plt.show_grid_major(x=False, y=True, thickness=codas_plot_grid_thickness['major'], color=codas_plot_grid_color['major'])
-      plt.show_grid_minor(x=False, y=False, thickness=codas_plot_grid_thickness['minor'], color=codas_plot_grid_color['minor'])
-      plt.set_x_ticks_spacing(**codas_plot_x_tickSpacing_s[coda_plot_type], value_to_include=0)
-      plt.set_y_ticks_spacing(**codas_plot_y_tickSpacing[coda_plot_type],value_to_include=0)
-      plt.show_box(False)
-      plt.show_tick_labels(x=(not codas_plot_hide_xlabels[coda_plot_type]), y=True)
-      plt.set_x_label('Time [s]' if not codas_plot_hide_xlabels[coda_plot_type] else '')
-      # Set labels and fonts.
-      if coda_plot_type == 'ici':
-        plt.set_y_label('Inter-Click [ms]')
-      elif coda_plot_type == 'tfs':
-        plt.set_y_label('To Coda Start [s]')
-      plt.set_x_limits([-codas_plot_duration_beforeCurrentTime_s, codas_plot_duration_afterCurrentTime_s])
-      plt.set_y_limits(codas_plot_yrange[coda_plot_type])
-      
-      # Get visibly distinct colors for each whale index.
-      whale_indexes_all = codas_data['whale_indexes']
-      unique_whale_indexes = sorted(list(OrderedDict(zip(whale_indexes_all, whale_indexes_all)).keys()))
-      unique_whale_indexes_uncertain = [x for x in unique_whale_indexes if x >= 20]
-      # Get colors for more 'certain' whales, which avoid red colors.
-      whale_colors_certain = [(0, 1, 0), (1, 0, 1), (1, 1, 0), (0, 1, 1), (1, 1, 1)]
-      whale_colors_certain_extra = distinctipy.get_colors(len(unique_whale_indexes) - len(unique_whale_indexes_uncertain) - len(whale_colors_certain),
-                                                          exclude_colors=[(1, 0, 0), (0, 0, 0)] + whale_colors_certain,
-                                                          rng=3,
-                                                          pastel_factor=0.5,
-                                                          n_attempts=1000)
-      whale_colors_certain_extra.reverse()
-      whale_colors_certain += whale_colors_certain_extra
-      # Get colors for 'uncertain' whales that avoids green and colors already chosen.
-      whale_colors_uncertain = distinctipy.get_colors(len(unique_whale_indexes_uncertain),
-                                                      exclude_colors=[(0, 0, 0), (0, 1, 0), (1, 1, 1)]
-                                                                     + whale_colors_certain,
-                                                      rng=6,
-                                                      pastel_factor=0.8,
-                                                      n_attempts=1000)
-      # Get a full list of whale colors, with RGB values scaled to 255 instead of 1.
-      whale_colors = [distinctipy.get_rgb256(c) for c in whale_colors_certain + whale_colors_uncertain]
-      whale_pens = [pyqtgraph.mkPen(whale_color, width=codas_plot_pen_width) for whale_color in whale_colors]
-      whale_symbol_pens = [pyqtgraph.mkPen(codas_plot_symbolPen_outlineColor_certain if whale_index < 20 else codas_plot_symbolPen_outlineColor_uncertain,
-                                           width=codas_plot_symbolPen_width_certain if whale_index < 20 else codas_plot_symbolPen_width_uncertain)
-                           for whale_index in unique_whale_indexes]
-      
-      # Store the line handles.
-      codas_plot_handles[coda_plot_type] = (plt,)
-      # Set dummy data as not having any codas (dict of empty lists) at an epoch time that won't exist (0).
-      codas_dummy_data = (dict([(key, []) for key in codas_data]), 0, coda_plot_type)
-      # Render all updates to the plot formatting.
-      plt.render_empty()
-      # Update the example composite image.
-      update_subplot(composite_img_dummy, codas_layout_specs, ['codas', codas_dummy_data],
-                     subplot_label=None,
-                     subplot_horizontal_alignment=codas_plot_horizontal_alignment,
-                     plot_handles=codas_plot_handles[coda_plot_type])
-      # Store the dummy data.
-      dummy_datas[str(codas_layout_specs)] = ['codas', codas_dummy_data]
-      # Show the window if desired.
-      if show_visualization_window:
-        plt.show_plot(block=False, window_title='Word!')
-        cv2.imwrite('test_plot_codas.jpg', plt.get_plot_image())
-        print('word', plt.get_plot_image().shape)
-  
-  # Show the window if desired.
-  if show_visualization_window or debug_composite_layout:
-    cv2.imwrite('test_plot_composite.jpg', cv2.cvtColor(composite_img_dummy, cv2.COLOR_BGR2RGB))
-    cv2.imshow('Happy Birthday!', cv2.cvtColor(composite_img_dummy, cv2.COLOR_BGR2RGB))
-    cv2.waitKey(1)
-    if debug_composite_layout:
-      cv2.waitKey(0)
-      import sys
-      sys.exit()
-
-
-######################################################
-# CREATE A VIDEO
-######################################################
 
 print()
 print('Generating an output video with %d frames' % output_video_timestamps_s.shape[0])
@@ -1392,32 +1396,54 @@ print('Generating an output video with %d frames' % output_video_timestamps_s.sh
 duration_s_updateSubplots_total = 0
 duration_s_updateSubplots_audio = 0
 duration_s_updateSubplots_codas = 0
-duration_s_updateSubplots_imgvid = 0
+duration_s_updateSubplots_images = 0
+duration_s_updateSubplots_videos = 0
 duration_s_updateSubplots_drones = 0
+duration_s_showVisualization = 0
 duration_s_getIndex = 0
 duration_s_readImages = 0
+duration_s_readVideos = 0
 readImages_count = 0
 readVideos_count = 0
-duration_s_readVideos = 0
 duration_s_audioParsing = 0
+duration_s_codasParsing = 0
 duration_s_exportFrame = 0
 duration_s_writeFrame = 0
 
+# Will use a buffer of frames to reduce overhead.
+# The ThreadedVideoWriter class will add a new frame to the buffer and then write it to video in the background.
+#   This allows the main loop below to work on generating the next frame while the previous one is being written.
+#   But by default, the ThreadedVideoWriter will need to make a copy of the frame since otherwise
+#     the main loop will edit the same pointer that is in the writing buffer.
+#     This is fine, but incurs a non-trivial processing cost of copying the frame (a large numpy matrix).
+#   To avoid this, we can keep a buffer of frames to edit.
+#     We can check that the video writer is done with a frame before editing it and wait if needed,
+#     but if the buffer is long enough and the writing fast enough it is likely that we will avoid this delay as well.
+frame_buffer_length = 200
 # Create a video writer that will use threading to reduce overhead.
-composite_video_writer = ThreadedVideoWriter(
-                            output_filepath=output_video_filepath,
-                            frame_rate=output_video_fps, max_buffered_frames=100,
-                            overwrite_existing_video=True)
+if output_video_filepath is not None:
+  composite_video_writer = ThreadedVideoWriter(
+                              output_filepath=output_video_filepath,
+                              frame_rate=output_video_fps, max_buffered_frames=frame_buffer_length,
+                              copy_added_frames=False,
+                              overwrite_existing_video=True)
+else:
+  composite_video_writer = None
+# Create a buffer of frames that aligns with the buffered video writer.
+# This will allow us to avoid making a copy of every frame when adding it to the write buffer.
+composite_img_buffer = [None]*frame_buffer_length
+composite_img_buffer_index = 0
 
-# Generate a frame for every desired timestamp.
-if use_opencv_subplots:
-  composite_img_current = composite_img_blank.copy()
-layouts_updated = {}
-layouts_showing_dummyData = dict([(str(layout_specs), False) for layout_specs in composite_layout.values()])
-layouts_prevState = dict([(str(layout_specs), None) for layout_specs in composite_layout.values()])
+# Store the previous state of each subplot, to reduce overhead if nothing has changed.
+layouts_prevState = dict([(layout_specs, None) for layout_specs in composite_layout.values()])
+layouts_prevImages = dict([(layout_specs, None) for layout_specs in composite_layout.values()])
+
+# Initialize state for printing status updates.
 last_status_time_s = time.time()
 last_status_frame_index = 0
 start_loop_time_s = time.time()
+
+# Loop through the video!
 for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Print periodic status updates.
   if time.time() - last_status_time_s > 10:
@@ -1428,25 +1454,30 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
            frame_index/(time.time() - start_loop_time_s)))
     last_status_time_s = time.time()
     last_status_frame_index = frame_index
-
-  # Mark that no subplot layouts have been updated.
-  for (device_friendlyName, layout_specs) in composite_layout.items():
-    layouts_updated[str(layout_specs)] = False
-
+  
+  # Wait for the frame previously stored at this buffer location to be written to video.
+  t0 = time.time()
+  while composite_video_writer.frame_is_pending_write(composite_img_buffer_index):
+    time.sleep(0.001)
+  duration_s_writeFrame += time.time() - t0
+  # Create a blank frame.
+  composite_img_buffer[composite_img_buffer_index] = get_composite_img_blank()
+  composite_img_current = composite_img_buffer[composite_img_buffer_index]
+  
   # Loop through each specified device stream.
   # Note that multiple devices may be mapped to the same layout position;
-  #  in that case the last device with data for this timestep will be used.
+  #  in that case the first device with data for this timestep will be used.
+  
+  # Update video, image, and audio visualizations.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     device_id = device_friendlyName_to_id(device_friendlyName)
     (row, col, rowspan, colspan) = layout_specs
     (subplot_width, subplot_height) = get_subplot_size(layout_specs)
-    if device_id in media_infos:
-      media_file_infos = media_infos[device_id]
-    else:
-      media_file_infos = {}
+    if device_id not in media_infos:
+      continue
     # For each media file associated with this device, see if it has data for this timestep.
     # Note that the device may have multiple images that match this timestamp, but only the first will be used.
-    for (filepath, (timestamps_s, data)) in media_file_infos.items():
+    for (filepath, (timestamps_s, data)) in media_infos[device_id].items():
       # Handle videos.
       if is_video(filepath):
         # Find the data index closest to the current time (if any).
@@ -1454,69 +1485,65 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         data_index = get_index_for_time_s(timestamps_s, current_time_s, timestamp_to_target_thresholds_s['video'])
         duration_s_getIndex += time.time() - t0
         if data_index is not None:
-          # Only spend time loading data and updating the plot if it changed since last frame.
-          if (filepath, data_index) == layouts_prevState[str(layout_specs)]:
-            layouts_updated[str(layout_specs)] = True
-            layouts_showing_dummyData[str(layout_specs)] = False
+          # Only spend time loading a frame if it would be a different one than last frame.
+          if (filepath, data_index) == layouts_prevState[layout_specs]:
+            t0 = time.time()
+            update_image_subplot(composite_img_current, layout_specs, layouts_prevImages[layout_specs],
+                                 subplot_label=device_friendlyName,
+                                 subplot_label_outline_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None,
+                                 subplot_horizontal_alignment='center')
+            duration_s_updateSubplots_videos +=time.time()-t0
             break # don't check any more media for this device
           # Read the video frame at the desired index.
           t0 = time.time()
-          success, img = load_frame(data, data_index,
-                                    target_width=subplot_width,
-                                    target_height=subplot_height)
-
-          if success:
-            duration_s_readVideos += time.time() - t0
+          img = load_frame(data, data_index, target_width=subplot_width, target_height=subplot_height)
+          duration_s_readVideos += time.time() - t0
+          if img is not None:
             readVideos_count += 1
             # Update the subplot with the video frame.
             t0 = time.time()
-            if use_pyqtgraph_subplots:
-              update_subplot(layout_widgets[str(layout_specs)], layout_specs, [img], label=device_friendlyName)
-            elif use_opencv_subplots:
-              img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-              update_subplot(composite_img_current, layout_specs, ['image', img],
-                             subplot_label=device_friendlyName,
-                             subplot_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
-            layouts_updated[str(layout_specs)] = True
-            layouts_showing_dummyData[str(layout_specs)] = False
-            layouts_prevState[str(layout_specs)] = (filepath, data_index)
+            update_image_subplot(composite_img_current, layout_specs, img,
+                                 subplot_label=device_friendlyName,
+                                 subplot_label_outline_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None,
+                                 subplot_horizontal_alignment='center')
+            layouts_prevState[layout_specs] = (filepath, data_index)
+            layouts_prevImages[layout_specs] = img
             duration_s_updateSubplots_total += time.time()-t0
-            duration_s_updateSubplots_imgvid += time.time()-t0
+            duration_s_updateSubplots_videos +=time.time()-t0
             break # don't check any more media for this device
-      # Handle photos.
+      
+      # Handle images.
       elif is_image(filepath):
         # Find the data index closest to the current time (if any).
         t0 = time.time()
         data_index = get_index_for_time_s(timestamps_s, current_time_s, timestamp_to_target_thresholds_s['image'])
         duration_s_getIndex += time.time() - t0
         if data_index is not None:
-          # Only spend time loading data and updating the plot if it changed since last frame.
-          if (filepath, data_index) == layouts_prevState[str(layout_specs)]:
-            layouts_updated[str(layout_specs)] = True
-            layouts_showing_dummyData[str(layout_specs)] = False
+          # Only spend time loading the image if it would be a different one than last frame.
+          if (filepath, data_index) == layouts_prevState[layout_specs]:
+            update_image_subplot(composite_img_current, layout_specs, layouts_prevImages[layout_specs],
+                                 subplot_label=device_friendlyName,
+                                 subplot_label_outline_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None,
+                                 subplot_horizontal_alignment='center')
+            duration_s_updateSubplots_images += time.time() - t0
             break # don't check any more media for this device
           # Read the desired photo.
           t0 = time.time()
-          img = load_image(filepath,
-                           target_width=subplot_width,
-                           target_height=subplot_height)
+          img = load_image(filepath, target_width=subplot_width, target_height=subplot_height)
           duration_s_readImages += time.time() - t0
           readImages_count += 1
           # Update the subplot with the photo.
           t0 = time.time()
-          if use_pyqtgraph_subplots:
-            update_subplot(layout_widgets[str(layout_specs)], layout_specs, [img], label=device_friendlyName)
-          elif use_opencv_subplots:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            update_subplot(composite_img_current, layout_specs, ['image', img],
-                           subplot_label=device_friendlyName,
-                           subplot_label_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None)
-          layouts_updated[str(layout_specs)] = True
-          layouts_showing_dummyData[str(layout_specs)] = False
-          layouts_prevState[str(layout_specs)] = (filepath, data_index)
-          duration_s_updateSubplots_total += time.time()-t0
-          duration_s_updateSubplots_imgvid += time.time()-t0
+          update_image_subplot(composite_img_current, layout_specs, img,
+                               subplot_label=device_friendlyName,
+                               subplot_label_outline_color=drone_plot_colors[list(drone_datas.keys()).index(device_id)] if device_id in drone_datas else None,
+                               subplot_horizontal_alignment='center')
+          layouts_prevState[layout_specs] = (filepath, data_index)
+          layouts_prevImages[layout_specs] = img
+          duration_s_updateSubplots_total += time.time() - t0
+          duration_s_updateSubplots_images += time.time() - t0
           break # don't check any more media for this device
+      
       # Handle audio.
       elif is_audio(filepath):
         # Find the data index closest to the current time (if any).
@@ -1524,10 +1551,12 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
         data_index = get_index_for_time_s(timestamps_s, current_time_s, timestamp_to_target_thresholds_s['audio'])
         duration_s_getIndex += time.time() - t0
         if data_index is not None:
-          # Only spend time loading data and updating the plot if it changed since last frame.
-          if (filepath, data_index) == layouts_prevState[str(layout_specs)]:
-            layouts_updated[str(layout_specs)] = True
-            layouts_showing_dummyData[str(layout_specs)] = False
+          # Only spend time loading data if it would be different than last frame.
+          if (filepath, data_index) == layouts_prevState[layout_specs]:
+            update_audio_subplot(composite_img_current, layout_specs, layouts_prevImages[layout_specs],
+                                 imagePlots[layout_specs],
+                                 subplot_horizontal_alignment='center')
+            duration_s_updateSubplots_audio += time.time() - t0
             break # don't check any more media for this device
           t0 = time.time()
           # Get the start/end indexes of the data to plot.
@@ -1535,187 +1564,133 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
           start_index = data_index - audio_plot_length_beforeCurrentTime
           end_index = data_index + audio_plot_length_afterCurrentTime + 1
           # Determine how much silence should be added to the data to fill the plot.
-          data_t_length = data.shape[0] if audio_plot_waveform else data[0].shape[1]
+          data_t_length = data.shape[0] if audio_plot_type == 'waveform' else data.shape[1]
           num_toPad_pre = 0 if start_index >= 0 else -start_index
           num_toPad_post = 0 if end_index <= data_t_length else end_index - data_t_length
           # Adjust the start/end indexes to be within the data bounds.
           start_index = max(0, start_index)
           end_index = min(data_t_length, end_index)
           # Get the data and pad it as needed.
-          if audio_plot_waveform:
+          if audio_plot_type == 'waveform':
             audio_num_channels = data.shape[1]
-            data_toPlot = data[start_index:end_index]
+            data_toPlot = data[start_index:end_index, :]
             if num_toPad_pre > 0 or num_toPad_post > 0:
               data_toPlot = np.vstack([np.zeros((num_toPad_pre, audio_num_channels)),
                                        data_toPlot,
                                        np.zeros((num_toPad_post, audio_num_channels))])
-            data_toPlot = ['audio', data_toPlot]
-          if audio_plot_spectrogram:
-            (spectrogram_colormapped, t_ticks, f_ticks, colorbar_levels) = data
-            data_toPlot = spectrogram_colormapped[:, start_index:end_index, :]
+          if audio_plot_type == 'spectrogram':
+            data_toPlot = data[:, start_index:end_index, :]
             if num_toPad_pre > 0 or num_toPad_post > 0:
-              data_toPlot = np.hstack([np.zeros((spectrogram_colormapped.shape[0], num_toPad_pre, 3)),
+              data_toPlot = np.hstack([np.zeros((data.shape[0], num_toPad_pre, 3)),
                                        data_toPlot,
-                                       np.zeros((spectrogram_colormapped.shape[0], num_toPad_post, 3))])
-            data_toPlot = ('spectrogram', data_toPlot)
+                                       np.zeros((data.shape[0], num_toPad_post, 3))])
           duration_s_audioParsing += time.time() - t0
           # Update the subplot with the waveform or spectrogram segment.
           t0 = time.time()
-          if use_pyqtgraph_subplots:
-            update_subplot(layout_widgets[str(layout_specs)], layout_specs, data_toPlot)
-          elif use_opencv_subplots:
-            update_subplot(composite_img_current, layout_specs, data_toPlot,
-                           subplot_label=None,
-                           plot_handles=audio_plot_handles[str(layout_specs)])
-          layouts_updated[str(layout_specs)] = True
-          layouts_showing_dummyData[str(layout_specs)] = False
-          layouts_prevState[str(layout_specs)] = (filepath, data_index)
-          duration_s_updateSubplots_total += time.time()-t0
-          duration_s_updateSubplots_audio += time.time()-t0
+          update_audio_subplot(composite_img_current, layout_specs, data_toPlot,
+                               imagePlots[layout_specs],
+                               subplot_horizontal_alignment='center')
+          layouts_prevState[layout_specs] = (filepath, data_index)
+          layouts_prevImages[layout_specs] = imagePlots[layout_specs].get_plot_image()
+          duration_s_updateSubplots_total += time.time()- t0
+          duration_s_updateSubplots_audio += time.time()- t0
           break # don't check any more media for this device
-    # Check if this is a drone-positions layout, and if so update the plot.
-    if device_id == 'Drone_Positions':
-      drone_data_toPlot = dummy_datas[str(layout_specs)][1].copy()
-      for (drone_index, drone_device_id) in enumerate(drone_datas.keys()):
-        for (filepath, (timestamps_s, drone_data)) in drone_datas[drone_device_id].items():
-          # Find the data index closest to the current time (if any).
-          t0 = time.time()
-          data_index = get_index_for_time_s(timestamps_s, current_time_s, timestamp_to_target_thresholds_s['drone'])
-          duration_s_getIndex += time.time() - t0
-          if data_index is not None:
-            drone_data_toPlot[drone_index] = {
-              'latitude': drone_data['latitude'][data_index],
-              'longitude': drone_data['longitude'][data_index],
-              'altitude_relative_m': drone_data['altitude_relative_m'][data_index],
-            }
-            break # don't check any more media for this device
-      # Only spend time updating the plot if it changed since last frame.
-      if drone_data_toPlot == layouts_prevState[str(layout_specs)]:
-        layouts_updated[str(layout_specs)] = True
-        layouts_showing_dummyData[str(layout_specs)] = False
-      else:
-        t0 = time.time()
-        update_subplot(composite_img_current, layout_specs, ['drone', drone_data_toPlot],
-                       subplot_label=None,
-                       plot_handles=drone_plot_handles)
-        layouts_updated[str(layout_specs)] = True
-        layouts_showing_dummyData[str(layout_specs)] = False
-        layouts_prevState[str(layout_specs)] = (drone_data_toPlot)
-        duration_s_updateSubplots_total += time.time()-t0
-        duration_s_updateSubplots_drones += time.time()-t0
-    # Check if this is a coda-annotations layout, and if so update the plot.
-    if device_id == '_coda_annotations_shane':
-      # Find codas within the current plot window.
-      plot_start_time_s = current_time_s - codas_plot_duration_beforeCurrentTime_s
-      plot_end_time_s = current_time_s + codas_plot_duration_afterCurrentTime_s
-      coda_data_toPlot = dict([(key, []) for key in codas_data])
-      for coda_index in range(num_codas):
-        coda_start_time_s = codas_data['coda_start_times_s'][coda_index]
-        coda_end_time_s = codas_data['coda_end_times_s'][coda_index]
-        click_times_s = codas_data['click_times_s'][coda_index]
-        if (coda_start_time_s >= plot_start_time_s and coda_start_time_s <= plot_end_time_s) \
-          or (coda_end_time_s >= plot_start_time_s and coda_end_time_s <= plot_end_time_s):
-            for key in codas_data:
-              coda_data_toPlot[key].append(codas_data[key][coda_index])
-      # Only spend time updating the plot if it changed since last frame.
-      if coda_data_toPlot == layouts_prevState[str(layout_specs)]:
-        layouts_updated[str(layout_specs)] = True
-        layouts_showing_dummyData[str(layout_specs)] = False
-      else:
-        t0 = time.time()
-        coda_plot_type = 'ici' if '(ICI)' in device_friendlyName else 'tfs'
-        update_subplot(composite_img_current, layout_specs,
-                       ['codas', (coda_data_toPlot, current_time_s, coda_plot_type)],
-                       subplot_label=None,
-                       subplot_horizontal_alignment=codas_plot_horizontal_alignment,
-                       plot_handles=codas_plot_handles[coda_plot_type])
-        layouts_updated[str(layout_specs)] = True
-        layouts_showing_dummyData[str(layout_specs)] = False
-        layouts_prevState[str(layout_specs)] = (coda_data_toPlot, current_time_s)
-        duration_s_updateSubplots_total += time.time()-t0
-        duration_s_updateSubplots_codas += time.time()-t0
-
-  # If a layout was not updated, show its dummy data.
-  # But only spend time updating it if it isn't already showing dummy data.
+  
+  # Update drone data visualizations.
   for (device_friendlyName, layout_specs) in composite_layout.items():
-    if not layouts_updated[str(layout_specs)] and not layouts_showing_dummyData[str(layout_specs)]:
-      device_id = device_friendlyName_to_id(device_friendlyName)
+    device_id = device_friendlyName_to_id(device_friendlyName)
+    (row, col, rowspan, colspan) = layout_specs
+    (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+    if device_id != 'Drone_Positions':
+      continue
+    drone_data_toPlot = [None]*len(drone_datas)
+    layout_curState = [None]*len(drone_datas)
+    for (drone_index, drone_device_id) in enumerate(drone_datas.keys()):
+      for (filepath, (timestamps_s, drone_data)) in drone_datas[drone_device_id].items():
+        # Find the data index closest to the current time (if any).
+        t0 = time.time()
+        data_index = get_index_for_time_s(timestamps_s, current_time_s, timestamp_to_target_thresholds_s['drone'])
+        duration_s_getIndex += time.time() - t0
+        if data_index is not None:
+          drone_data_toPlot[drone_index] = {
+            'latitude': drone_data['latitude'][data_index],
+            'longitude': drone_data['longitude'][data_index],
+            'altitude_relative_m': drone_data['altitude_relative_m'][data_index],
+          }
+          layout_curState[drone_index] = (filepath, data_index)
+          break # don't check any more media for this device
+    # Only spend time updating the plot if the data changed since last frame.
+    if layout_curState == layouts_prevState[layout_specs]:
+      pass
+    elif True in [data is not None for data in drone_data_toPlot]:
       t0 = time.time()
-      if use_pyqtgraph_subplots:
-        update_subplot(layout_widgets[str(layout_specs)], layout_specs, dummy_datas[str(layout_specs)])
-      elif use_opencv_subplots:
-        if dummy_datas[str(layout_specs)][0] in ['audio', 'spectrogram']:
-          update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
-                         subplot_label=None,
-                         plot_handles=audio_plot_handles[str(layout_specs)])
-          duration_s_updateSubplots_audio += time.time()-t0
-        elif dummy_datas[str(layout_specs)][0] == 'codas':
-          update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
-                         subplot_label=None,
-                         subplot_horizontal_alignment=codas_plot_horizontal_alignment,
-                         plot_handles=codas_plot_handles[coda_plot_type])
-          duration_s_updateSubplots_codas += time.time()-t0
-        else:
-          update_subplot(composite_img_current, layout_specs, dummy_datas[str(layout_specs)],
-                         subplot_label=None)
-          if dummy_datas[str(layout_specs)][0] == 'image':
-            duration_s_updateSubplots_imgvid +=time.time()-t0
-      layouts_showing_dummyData[str(layout_specs)] = True
-      duration_s_updateSubplots_total +=time.time()-t0
-      layouts_prevState[str(layout_specs)] = None
-
-  # Refresh the figure with the updated subplots.
-  if use_pyqtgraph_subplots or show_visualization_window:
+      update_drone_subplot(composite_img_current, layout_specs, drone_data_toPlot,
+                           imagePlots[layout_specs],
+                           subplot_horizontal_alignment='center')
+      layouts_prevState[layout_specs] = layout_curState
+      layouts_prevImages[layout_specs] = imagePlots[layout_specs].get_plot_image()
+      duration_s_updateSubplots_total += time.time() - t0
+      duration_s_updateSubplots_drones += time.time() - t0
+  
+  # Update coda visualizations.
+  for (device_friendlyName, layout_specs) in composite_layout.items():
+    device_id = device_friendlyName_to_id(device_friendlyName)
+    (row, col, rowspan, colspan) = layout_specs
+    (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+    if device_id != '_coda_annotations_shane':
+      continue
+    # Find codas within the current plot window.
     t0 = time.time()
-    cv2.imshow('Happy Birthday!', composite_img_current)
-    cv2.waitKey(1)
-    duration_s_updateSubplots_total += time.time()-t0
+    plot_start_time_s = current_time_s - codas_plot_duration_beforeCurrentTime_s
+    plot_end_time_s = current_time_s + codas_plot_duration_afterCurrentTime_s
+    coda_data_toPlot = dict([(key, []) for key in codas_data])
+    found_active_annotation_file = False
+    for coda_index in range(len(codas_data['coda_start_times_s'])):
+      coda_start_time_s = codas_data['coda_start_times_s'][coda_index]
+      coda_end_time_s = codas_data['coda_end_times_s'][coda_index]
+      click_times_s = codas_data['click_times_s'][coda_index]
+      if (coda_start_time_s >= plot_start_time_s and coda_start_time_s <= plot_end_time_s) \
+        or (coda_end_time_s >= plot_start_time_s and coda_end_time_s <= plot_end_time_s):
+          for key in codas_data:
+            coda_data_toPlot[key].append(codas_data[key][coda_index])
+          found_active_annotation_file = True
+    # If there were no codas, determine whether an annotations file is still active and there were just no clicks for this plot.
+    if not found_active_annotation_file:
+      for coda_file_index in range(len(codas_files_start_times_s)):
+        if current_time_s >= codas_files_start_times_s[coda_file_index] \
+            and current_time_s <= codas_files_end_times_s[coda_file_index]:
+          found_active_annotation_file = True
+          break
+    duration_s_codasParsing += time.time() - t0
+    # If there is an active annotations file at this time, update the plot.
+    if found_active_annotation_file:
+      t0 = time.time()
+      coda_plot_type = 'ici' if '(ICI)' in device_friendlyName else 'tfs'
+      update_codas_subplot(composite_img_current, layout_specs,
+                           coda_data_toPlot, current_time_s, coda_plot_type, imagePlots[layout_specs],
+                           subplot_horizontal_alignment='center')
+      duration_s_updateSubplots_total += time.time() - t0
+      duration_s_updateSubplots_codas += time.time() - t0
 
-  # Render the figure into a composite frame image.
-  if use_pyqtgraph_subplots:
-    t0 = time.time()
-    exported_img = graphics_layout.grab().toImage()
-    exported_img = qimage_to_numpy(exported_img)
-    exported_img = np.array(exported_img[:,:,0:3])
-    exported_img = scale_image(exported_img, target_width=output_video_width, target_height=output_video_height)
-    duration_s_exportFrame += time.time() - t0
-  elif use_opencv_subplots:
-    exported_img = composite_img_current
   # Add a banner with the current timestamp.
-  exported_img = add_timestamp_banner(exported_img, current_time_s)
-  # Write the frame to the output video.
-  if output_video_filepath is not None:
+  composite_img_current = add_timestamp_banner(composite_img_current, current_time_s)
+  
+  # Show the updated composite frame if desired.
+  if show_visualization_window:
     t0 = time.time()
-    # # Create the video writer if this is the first frame, since we now know the frame dimensions.
-    # if composite_video_writer is None:
-    #   # v_wrt_str = f"appsrc ! video/x-raw, format=BGR ! queue " \
-    #   #             f"! nvvidconv ! omxh264enc " \
-    #   #             f"! h264parse " \
-    #   #             f"! qtmux " \
-    #   #             f"! filesink location=test.mp4"
-    #   # v_wrt_str = f"appsrc ! video/x-raw, format=BGR ! queue " \
-    #   #             f"! videoconvert ! video/x-raw,format=BGRx " \
-    #   #             f"! nvvidconv ! video/x-raw(memory:NVMM),format=NV12 " \
-    #   #             f"! nvv4l2h264enc " \
-    #   #             f"! h264parse " \
-    #   #             f"! qtmux " \
-    #   #             f"! filesink location={output_video_filepath}"
-    #   # composite_video_writer = cv2.VideoWriter(v_wrt_str, cv2.CAP_GSTREAMER,
-    #   #                                          0, output_video_fps, [exported_img.shape[1], exported_img.shape[0]])
-    #   composite_video_writer = cv2.VideoWriter(output_video_filepath,
-    #                                            cv2.VideoWriter_fourcc(*'MJPG') if '.avi' in output_video_filepath.lower() else cv2.VideoWriter_fourcc(*'MP4V'),
-    #                                            output_video_fps, [exported_img.shape[1], exported_img.shape[0]])
-    # composite_video_writer.write(exported_img)
-    composite_video_writer.add_frame(exported_img)
+    cv2.imshow('Happy Birthday!', cv2.cvtColor(scale_image(composite_img_dummy, target_width=600, target_height=600), cv2.COLOR_BGR2RGB))
+    cv2.waitKey(1)
+    duration_s_showVisualization += time.time()-t0
+  
+  # Add the frame to the buffer of frames to write to the output video.
+  if composite_video_writer is not None:
+    t0 = time.time()
+    composite_video_writer.add_frame(cv2.cvtColor(composite_img_current, cv2.COLOR_BGR2RGB))
+    composite_img_buffer_index = (composite_img_buffer_index+1) % frame_buffer_length
     duration_s_writeFrame += time.time() - t0
 
-# All done!
-total_duration_s = time.time() - start_loop_time_s
-print()
-print('Generated composite video in %d seconds' % total_duration_s)
-print()
-
 # Release the output video.
+# This will also write any frames that are remaining in the write buffer.
 if composite_video_writer is not None:
   composite_video_writer.release()
 
@@ -1724,6 +1699,12 @@ for (device_id, media_file_infos) in media_infos.items():
   for (filepath, (timestamps_s, data)) in media_file_infos.items():
     if isinstance(data, cv2.VideoCapture):
       data.release()
+
+# All done!
+total_duration_s = time.time() - start_loop_time_s
+print()
+print('Generated composite video in %d seconds' % total_duration_s)
+print()
 
 # Print timing information.
 print()
@@ -1734,6 +1715,8 @@ print('  Column width   : %d' % composite_layout_column_width)
 print('  Output duration: %d' % output_video_duration_s)
 print('  Output rate    : %d' % output_video_fps)
 print('  Show visualization window: %s' % show_visualization_window)
+print('  Composite layout:', composite_layout)
+print()
 print('Processing duration: ')
 print('  Total duration: %0.3f seconds' % total_duration_s)
 print('  Frame count   : %d' % output_video_timestamps_s.shape[0])
@@ -1744,17 +1727,18 @@ print('  UpdateSubplots (total)  : %6.2f%% (%0.3f seconds)'%(100*duration_s_upda
 print('  UpdateSubplots (audio)  : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_audio/total_duration_s, duration_s_updateSubplots_audio))
 print('  UpdateSubplots (codas)  : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_codas/total_duration_s, duration_s_updateSubplots_codas))
 print('  UpdateSubplots (drones) : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_drones/total_duration_s, duration_s_updateSubplots_drones))
-print('  UpdateSubplots (imgvid) : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_imgvid/total_duration_s, duration_s_updateSubplots_imgvid))
+print('  UpdateSubplots (videos) : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_videos/total_duration_s, duration_s_updateSubplots_videos))
+print('  UpdateSubplots (images) : %6.2f%% (%0.3f seconds)'%(100*duration_s_updateSubplots_images/total_duration_s, duration_s_updateSubplots_images))
 print('  GetIndex                : %6.2f%% (%0.3f seconds)' % (100*duration_s_getIndex/total_duration_s, duration_s_getIndex))
 print('  ReadImages              : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readImages/total_duration_s, duration_s_readImages, readImages_count))
 print('  ReadVideos              : %6.2f%% (%0.3f seconds) (%d calls)' % (100*duration_s_readVideos/total_duration_s, duration_s_readVideos, readVideos_count))
 print('  ParseAudio              : %6.2f%% (%0.3f seconds)' % (100*duration_s_audioParsing/total_duration_s, duration_s_audioParsing))
+print('  ParseCodas              : %6.2f%% (%0.3f seconds)' % (100*duration_s_codasParsing/total_duration_s, duration_s_codasParsing))
 print('  ExportFrame             : %6.2f%% (%0.3f seconds)' % (100*duration_s_exportFrame/total_duration_s, duration_s_exportFrame))
 print('  WriteFrame              : %6.2f%% (%0.3f seconds)' % (100*duration_s_writeFrame/total_duration_s, duration_s_writeFrame))
 print('  DrawText                : %6.2f%% (%0.3f seconds)' % (100*get_duration_s_drawText()/total_duration_s, get_duration_s_drawText()))
 print('  ScaleImage              : %6.2f%% (%0.3f seconds)' % (100*get_duration_s_scaleImage()/total_duration_s, get_duration_s_scaleImage()))
-print()
-print('%0.5f | %4.1f%% %4.1f%% %4.1f%% %4.1f%% %4.1f%%' % (d, 100*d01/d, 100*d02/d, 100*d03/d, 100*d04/d, 100*d05/d))
+print('  Show Visualization      : %6.2f%% (%0.3f seconds)' % (100*duration_s_showVisualization/total_duration_s, duration_s_showVisualization))
 print()
 print()
 
