@@ -91,8 +91,10 @@ composite_layout = OrderedDict([
   ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
   ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
-  ('Codas (ICI)',           (5, 0, 1, 4)),
-  ('Codas (TFS)',           (6, 0, 1, 4)),
+  ('Codas Haifa (ICI)'    , (5, 0, 1, 4)),
+  # ('Codas Haifa (TFS)'    , (5, 0, 1, 4)),
+  ('Codas Biology (ICI)'  , (6, 0, 1, 4)),
+  # ('Codas Biology (TFS)'  , (6, 0, 1, 4)),
 ])
 
 # Specify the time zone offset to get local time of this data collection day from UTC.
@@ -156,7 +158,8 @@ device_friendlyNames = {
   'Misc/DelPreto_Pixel5'       : 'Phone (DelPreto)',
   'Misc/DelPreto_GoPro'        : 'GoPro (DelPreto)',
   'Drone_Positions'            : 'Drone Positions',
-  '_coda_annotations_shane'    : 'Codas', # will catch "Codas (ICI)" and "Codas (TFS)" from the above subplot layout specification
+  '_coda_annotations_biology'  : 'Codas Biology', # will catch "Codas Biology (ICI)" and "Codas Biology (TFS)" from the above subplot layout specification
+  '_coda_annotations_haifa'    : 'Codas Haifa',   # will catch "Codas Biology (ICI)" and "Codas Biology (TFS)" from the above subplot layout specification
 }
 
 # Define the start/end time of the video.
@@ -176,17 +179,28 @@ device_friendlyNames = {
 #   11:53:30 whales nearing the boat
 #   11:54:55 whales on other side of the boat
 #
-# Full span:
-output_video_start_time_str = '2023-07-08 10:20:13 -0400'
-output_video_duration_s = 19579
+# # Full span:
+# output_video_start_time_str = '2023-07-08 10:20:13 -0400'
+# output_video_duration_s = 19579
+# #
+# Haifa annotations:
+output_video_start_time_str = '2023-07-08 11:40:30 -0400'
+output_video_duration_s = 6600
 #
 # # Hydrophone file 280:
 # output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
 # output_video_duration_s = 184.32
 #
-# Testing for hydrophone file 280:
-output_video_start_time_str = '2023-07-08 11:55:10 -0400'
-output_video_duration_s = 60
+# # Testing for hydrophone file 280:
+# output_video_start_time_str = '2023-07-08 11:55:10 -0400'
+# output_video_duration_s = 60
+#
+# # Testing for spanning hydrophone files 279-280:
+# output_video_start_time_str = '2023-07-08 11:53:00 -0400'
+# output_video_duration_s = 60
+# # Testing for spanning hydrophone files 279-280:
+# output_video_start_time_str = '2023-07-08 11:53:30 -0400'
+# output_video_duration_s = 5
 
 # Define the frame rate of the output video.
 output_video_fps = 25
@@ -211,7 +225,7 @@ add_audio_track_to_output_video_compressed = True # Add audio to a version that 
 delete_output_video_withoutAudio = True # Delete the raw output video without audio, which may be quite large
 
 # Configure device and timestamp labels on the output video.
-output_video_banner_height_fraction = 0.04 # fraction of the final composite frame height
+output_video_banner_height_fraction = 0.03 # fraction of the final composite frame height
 output_video_banner_bg_color   = [100, 100, 100] # RGB
 output_video_banner_text_color = [0,   255, 255] # RGB
 # Configure the labels that identify device streams on the output video.
@@ -229,7 +243,7 @@ audio_num_channels_toPlot = 1
 audio_plot_type = 'spectrogram' # 'spectrogram' or 'waveform'
 audio_plot_x_tick_spacing = {'major':2, 'minor':1} # will only show major ticks
 audio_plot_grid_thickness = {'major': 2, 'minor': 2}
-audio_plot_font_size = 0.8
+audio_plot_font_size = 0.9
 audio_plot_label_color = (150, 150, 150) # RGB
 # Configure audio waveform plotting.
 audio_waveform_plot_colors = [(255, 255, 255), (255, 0, 255)] # RGB for each channel
@@ -262,7 +276,7 @@ codas_plot_marker_symbol_endClick = lambda whale_index: 'square' if whale_index 
 codas_plot_marker_size = lambda whale_index: 16 if whale_index < codas_uncertain_whale_index else 14
 codas_plot_currentTime_thickness = 2
 codas_plot_currentTime_color = (255, 255, 255) # RGB
-codas_plot_font_size = 0.8
+codas_plot_font_size = 0.9
 codas_plot_x_tickSpacing_s = {'ici': audio_plot_x_tick_spacing,
                               'tfs': audio_plot_x_tick_spacing}
 codas_plot_y_tickSpacing = {'ici': {'major':150, 'minor':1}, # will only show major ticks
@@ -281,8 +295,9 @@ codas_plot_tfs_scaleFactor = 1
 audio_plots_left_axis_position_ratio = 0.05  # fraction of plot image width at which the leftmost edge of the axis will be plotted
 audio_plots_right_axis_position_ratio = 0.95 # fraction of plot image width at which the rightmost edge of the axis will be plotted
 audio_plot_horizontal_alignment = 0 # fraction of composite image width at which to place the leftmost edge of the image plot inside the subplot
-codas_plot_hide_xlabels = {'ici': True, 'tfs': False} # e.g. if a spectrogram plot beneath it will have the labels instead
-audio_plot_hide_xlabels = True # e.g. if a coda plot beneath it will have the labels instead
+codas_plot_hide_xlabels = {'biology': {'ici': False, 'tfs': False},
+                           'haifa':   {'ici': False,  'tfs': False}}
+audio_plot_hide_xlabels = True
 
 # Configure drone plotting.
 drone_plot_reference_location_lonLat = [-61.373179, 15.306914] # will plot meters from this location (the Mango house)
@@ -358,13 +373,16 @@ output_video_banner_font = cv2.FONT_HERSHEY_SIMPLEX
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
 output_video_filepath = os.path.join(data_dir_root,
-                                     'composite_video_TEST2_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
+                                     'composite_video_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
                                      % (output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
                                         composite_layout_column_width,
                                         audio_resample_rate_hz, audio_plot_type,
-                                        ''.join(['_codasICI' if 'Codas (ICI)' in list(composite_layout.keys()) else '',
-                                                 '_codasTFS' if 'Codas (TFS)' in list(composite_layout.keys()) else ''])))
+                                        ''.join(['_codasICI' if True in ['(ICI)' in x for x in list(composite_layout.keys())] else '',
+                                                 '_codasTFS' if True in ['(TFS)' in x for x in list(composite_layout.keys())] else '',
+                                                 '_codasBio' if True in ['Codas Biology' in x for x in list(composite_layout.keys())] else '',
+                                                 '_codasHaifa' if True in ['Codas Haifa' in x for x in list(composite_layout.keys())] else '',
+                                                 ])))
 
 
 ######################################################
@@ -373,8 +391,10 @@ output_video_filepath = os.path.join(data_dir_root,
 
 # Convert a device friendly name to a device ID.
 def device_friendlyName_to_id(device_friendlyName_toFind):
-  if 'Codas (' in device_friendlyName_toFind:
-    device_friendlyName_toFind = 'Codas'
+  if 'Codas Biology (' in device_friendlyName_toFind:
+    device_friendlyName_toFind = 'Codas Biology'
+  if 'Codas Haifa (' in device_friendlyName_toFind:
+    device_friendlyName_toFind = 'Codas Haifa'
   for (device_id, device_friendlyName) in device_friendlyNames.items():
     if device_friendlyName == device_friendlyName_toFind:
       return device_id
@@ -546,15 +566,14 @@ media_infos = OrderedDict()
 drone_datas = OrderedDict()
 
 # For coda annotations, will create one combined dictionary from all files.
-codas_data = {
-  'coda_start_times_s': [],
-  'coda_end_times_s': [],
-  'click_icis_s': [],
-  'click_times_s': [],
-  'whale_indexes': [],
-}
-codas_files_start_times_s = []
-codas_files_end_times_s = []
+codas_data = dict([(source, {'coda_start_times_s': [],
+                             'coda_end_times_s': [],
+                             'click_icis_s': [],
+                             'click_times_s': [],
+                             'whale_indexes': [],
+                             }) for source in ['biology', 'haifa']])
+codas_files_start_times_s = dict([(source, []) for source in ['biology', 'haifa']])
+codas_files_end_times_s = dict([(source, []) for source in ['biology', 'haifa']])
 
 print()
 print('Extracting timestamps and pointers to data for every frame/photo/audio')
@@ -721,14 +740,20 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
     elif is_coda_annotations(filepath):
       (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes) = \
         get_coda_annotations(filepath, data_dir_root, adjust_start_time_s)
-      codas_data['coda_start_times_s'].extend(coda_start_times_s)
-      codas_data['coda_end_times_s'].extend(coda_end_times_s)
-      codas_data['click_icis_s'].extend(click_icis_s)
-      codas_data['click_times_s'].extend(click_times_s)
-      codas_data['whale_indexes'].extend(whale_indexes)
+      if '_coda_annotations_biology' in data_dir.lower():
+        source = 'biology'
+      elif '_coda_annotations_haifa' in data_dir.lower():
+        source = 'haifa'
+      else:
+        raise AssertionError('Unknown coda annotations source for [%s]' % filepath)
+      codas_data[source]['coda_start_times_s'].extend(coda_start_times_s)
+      codas_data[source]['coda_end_times_s'].extend(coda_end_times_s)
+      codas_data[source]['click_icis_s'].extend(click_icis_s)
+      codas_data[source]['click_times_s'].extend(click_times_s)
+      codas_data[source]['whale_indexes'].extend(whale_indexes)
       if len(click_times_s) > 0:
-        codas_files_start_times_s.append(click_times_s[0][0])
-        codas_files_end_times_s.append(click_times_s[-1][-1])
+        codas_files_start_times_s[source].append(click_times_s[0][0])
+        codas_files_end_times_s[source].append(click_times_s[-1][-1])
       del media_infos[device_id]
 
 # Remove devices with no data for the composite video.
@@ -1142,75 +1167,80 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
 
 
 # Initialize coda visualizations.
-for coda_plot_type in ['ici', 'tfs']:
-  if len(codas_data['coda_start_times_s']) > 0 and 'Codas (%s)' % coda_plot_type.upper() in composite_layout:
-    # Find the layout for the coda plot.
-    layout_specs = composite_layout['Codas (%s)' % coda_plot_type.upper()]
-    (row, col, rowspan, colspan) = layout_specs
-    # Store the media type.
-    media_types[layout_specs] = 'codas'
-    # Create a plot for the data, that is set to the target size so no rescaling will be needed.
-    plt = ImagePlot(auto_update_empty_plot=False)
-    (subplot_width, subplot_height) = get_subplot_size(layout_specs)
-    plt.set_plot_size(width=subplot_width, height=subplot_height)
-    # Format the plot.
-    plt.set_padding(left=0, top=subplot_border_size, right=0, bottom=subplot_border_size)
-    plt.set_axis_left_position(width_ratio=audio_plots_left_axis_position_ratio)
-    plt.set_axis_right_position(width_ratio=audio_plots_right_axis_position_ratio)
-    plt.set_x_limits([-codas_plot_duration_beforeCurrentTime_s, codas_plot_duration_afterCurrentTime_s])
-    plt.set_y_limits(codas_plot_yrange[coda_plot_type])
-    plt.show_grid_major(x=False, y=True, thickness=codas_plot_grid_thickness['major'], color=codas_plot_grid_color['major'])
-    plt.show_grid_minor(x=False, y=False, thickness=codas_plot_grid_thickness['minor'], color=codas_plot_grid_color['minor'])
-    plt.set_x_ticks_spacing(codas_plot_x_tickSpacing_s[coda_plot_type]['major'], codas_plot_x_tickSpacing_s[coda_plot_type]['minor'],
-                            value_to_include=0)
-    plt.set_y_ticks_spacing(codas_plot_y_tickSpacing[coda_plot_type]['major'], codas_plot_y_tickSpacing[coda_plot_type]['minor'],
-                            value_to_include=0)
-    plt.show_tick_labels(x=(not codas_plot_hide_xlabels[coda_plot_type]), y=True)
-    plt.set_x_label('Time [s]' if not codas_plot_hide_xlabels[coda_plot_type] else '')
-    plt.show_box(False)
-    if coda_plot_type == 'ici':
-      plt.set_y_label('Inter-Click [ms]')
-    elif coda_plot_type == 'tfs':
-      plt.set_y_label('To Coda Start [s]')
-    plt.set_font_size(size=codas_plot_font_size, yLabelHeightRatio=None)
-    plt.set_font_color(codas_plot_label_color)
-    
-    # Get visibly distinct colors for each whale index.
-    # Note that this could be done with a single simple distinctipy call,
-    #  but the below were manually tweaked to get colors that look nice and that
-    #  use more red colors for uncertain annotations.
-    whale_indexes_all = codas_data['whale_indexes']
-    unique_whale_indexes = sorted(list(OrderedDict(zip(whale_indexes_all, whale_indexes_all)).keys()))
-    unique_whale_indexes_uncertain = [x for x in unique_whale_indexes if x >= codas_uncertain_whale_index]
-    # Get colors for more 'certain' whales, which avoid red colors.
-    whale_colors_certain = [(0, 1, 0), (1, 0, 1), (1, 1, 0), (0, 1, 1), (1, 1, 1)]
-    whale_colors_certain_extra = distinctipy.get_colors(len(unique_whale_indexes) - len(unique_whale_indexes_uncertain) - len(whale_colors_certain),
-                                                        exclude_colors=[(1, 0, 0), (0, 0, 0)] + whale_colors_certain,
-                                                        rng=3,
-                                                        pastel_factor=0.5,
-                                                        n_attempts=1000)
-    whale_colors_certain_extra.reverse()
-    whale_colors_certain += whale_colors_certain_extra
-    # Get colors for 'uncertain' whales that avoids green and colors already chosen.
-    whale_colors_uncertain = distinctipy.get_colors(len(unique_whale_indexes_uncertain),
-                                                    exclude_colors=[(0, 0, 0), (0, 1, 0), (1, 1, 1)]
-                                                                   + whale_colors_certain,
-                                                    rng=6,
-                                                    pastel_factor=0.8,
-                                                    n_attempts=1000)
-    # Get a full list of whale colors, with RGB values scaled to 255 instead of 1.
-    codas_plot_unique_whale_colors = [distinctipy.get_rgb256(c) for c in whale_colors_certain + whale_colors_uncertain]
-    # Store a function that gets a whale color for a given index.
-    codas_plot_whale_color = lambda whale_index: codas_plot_unique_whale_colors[unique_whale_indexes.index(whale_index)]
-    
-    # Render all updates to the plot formatting.
-    plt.render_empty()
-    # Store the plot to update later.
-    imagePlots[layout_specs] = plt
-    # Show the window if desired.
-    if show_visualization_window:
-      plt.show_plot(block=False, window_title='Codas (%s)' % coda_plot_type.upper())
-      cv2.imwrite('test_plot_codas_%s.jpg' % coda_plot_type, plt.get_plot_image())
+whale_indexes_all = None
+for coda_source in ['biology', 'haifa']:
+  for coda_plot_type in ['ici', 'tfs']:
+    if len(codas_data[coda_source]['coda_start_times_s']) > 0 and 'Codas %s (%s)' % (coda_source.title(), coda_plot_type.upper()) in composite_layout:
+      # Find the layout for the coda plot.
+      layout_specs = composite_layout['Codas %s (%s)' % (coda_source.title(), coda_plot_type.upper())]
+      (row, col, rowspan, colspan) = layout_specs
+      # Store the media type.
+      media_types[layout_specs] = 'codas'
+      # Create a plot for the data, that is set to the target size so no rescaling will be needed.
+      plt = ImagePlot(auto_update_empty_plot=False)
+      (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+      plt.set_plot_size(width=subplot_width, height=subplot_height)
+      # Format the plot.
+      plt.set_padding(left=0, top=subplot_border_size, right=0, bottom=subplot_border_size)
+      plt.set_axis_left_position(width_ratio=audio_plots_left_axis_position_ratio)
+      plt.set_axis_right_position(width_ratio=audio_plots_right_axis_position_ratio)
+      plt.set_x_limits([-codas_plot_duration_beforeCurrentTime_s, codas_plot_duration_afterCurrentTime_s])
+      plt.set_y_limits(codas_plot_yrange[coda_plot_type])
+      plt.show_grid_major(x=False, y=True, thickness=codas_plot_grid_thickness['major'], color=codas_plot_grid_color['major'])
+      plt.show_grid_minor(x=False, y=False, thickness=codas_plot_grid_thickness['minor'], color=codas_plot_grid_color['minor'])
+      plt.set_x_ticks_spacing(codas_plot_x_tickSpacing_s[coda_plot_type]['major'], codas_plot_x_tickSpacing_s[coda_plot_type]['minor'],
+                              value_to_include=0)
+      plt.set_y_ticks_spacing(codas_plot_y_tickSpacing[coda_plot_type]['major'], codas_plot_y_tickSpacing[coda_plot_type]['minor'],
+                              value_to_include=0)
+      plt.show_tick_labels(x=(not codas_plot_hide_xlabels[coda_source][coda_plot_type]), y=True)
+      plt.set_x_label('Time [s]' if not codas_plot_hide_xlabels[coda_source][coda_plot_type] else '')
+      plt.show_box(False)
+      if coda_plot_type == 'ici':
+        plt.set_y_label('ICI [ms] %s' % coda_source.title())
+      elif coda_plot_type == 'tfs':
+        plt.set_y_label('TfS [ms] %s' % coda_source.title())
+      plt.set_font_size(size=codas_plot_font_size, yLabelHeightRatio=None)
+      plt.set_font_color(codas_plot_label_color)
+      
+      # Get visibly distinct colors for each whale index.
+      # Note that this could be done with a single simple distinctipy call,
+      #  but the below were manually tweaked to get colors that look nice and that
+      #  use more red colors for uncertain annotations.
+      if whale_indexes_all is None:
+        whale_indexes_all = codas_data[coda_source]['whale_indexes']
+      else:
+        whale_indexes_all.extend(codas_data[coda_source]['whale_indexes'])
+      unique_whale_indexes = sorted(list(OrderedDict(zip(whale_indexes_all, whale_indexes_all)).keys()))
+      unique_whale_indexes_uncertain = [x for x in unique_whale_indexes if x >= codas_uncertain_whale_index]
+      # Get colors for more 'certain' whales, which avoid red colors.
+      whale_colors_certain = [(0, 1, 0), (1, 0, 1), (1, 1, 0), (0, 1, 1), (1, 1, 1)]
+      whale_colors_certain_extra = distinctipy.get_colors(len(unique_whale_indexes) - len(unique_whale_indexes_uncertain) - len(whale_colors_certain),
+                                                          exclude_colors=[(1, 0, 0), (0, 0, 0)] + whale_colors_certain,
+                                                          rng=3,
+                                                          pastel_factor=0.5,
+                                                          n_attempts=1000)
+      whale_colors_certain_extra.reverse()
+      whale_colors_certain += whale_colors_certain_extra
+      # Get colors for 'uncertain' whales that avoids green and colors already chosen.
+      whale_colors_uncertain = distinctipy.get_colors(len(unique_whale_indexes_uncertain),
+                                                      exclude_colors=[(0, 0, 0), (0, 1, 0), (1, 1, 1)]
+                                                                     + whale_colors_certain,
+                                                      rng=6,
+                                                      pastel_factor=0.8,
+                                                      n_attempts=1000)
+      # Get a full list of whale colors, with RGB values scaled to 255 instead of 1.
+      codas_plot_unique_whale_colors = [distinctipy.get_rgb256(c) for c in whale_colors_certain + whale_colors_uncertain]
+      # Store a function that gets a whale color for a given index.
+      codas_plot_whale_color = lambda whale_index: codas_plot_unique_whale_colors[unique_whale_indexes.index(whale_index)]
+      
+      # Render all updates to the plot formatting.
+      plt.render_empty()
+      # Store the plot to update later.
+      imagePlots[layout_specs] = plt
+      # Show the window if desired.
+      if show_visualization_window:
+        plt.show_plot(block=False, window_title='Codas (%s)' % coda_plot_type.upper())
+        cv2.imwrite('test_plot_codas_%s.jpg' % coda_plot_type, plt.get_plot_image())
       
 
 # Initialize drone data visualizations.
@@ -1359,18 +1389,19 @@ if len(drone_datas) > 0 and 'Drone Positions' in composite_layout:
   blank_subplot_datas[layout_specs] = imagePlots[layout_specs].get_empty_plot_image()
 
 # Update coda visualizations.
-for coda_plot_type in ['ici', 'tfs']:
-  if len(codas_data['coda_start_times_s']) > 0 and 'Codas (%s)' % coda_plot_type.upper() in composite_layout:
-    # Find the layout for the coda plot.
-    layout_specs = composite_layout['Codas (%s)' % coda_plot_type.upper()]
-    # Set dummy data as not having any codas (dict of empty lists)
-    #  at an epoch time that won't exist (0).
-    codas_dummy_data = dict([(key, []) for key in codas_data])
-    # Update the example composite image.
-    update_codas_subplot(composite_img_dummy, layout_specs,
-                         codas_dummy_data, 0, coda_plot_type, imagePlots[layout_specs])
-    # Store a blank plot.
-    blank_subplot_datas[str(layout_specs)] = imagePlots[layout_specs].get_empty_plot_image()
+for coda_source in ['biology', 'haifa']:
+  for coda_plot_type in ['ici', 'tfs']:
+    if len(codas_data[coda_source]['coda_start_times_s']) > 0 and 'Codas %s (%s)' % (coda_source.title(), coda_plot_type.upper()) in composite_layout:
+      # Find the layout for the coda plot.
+      layout_specs = composite_layout['Codas %s (%s)' % (coda_source.title(), coda_plot_type.upper())]
+      # Set dummy data as not having any codas (dict of empty lists)
+      #  at an epoch time that won't exist (0).
+      codas_dummy_data = dict([(key, []) for key in codas_data[coda_source]])
+      # Update the example composite image.
+      update_codas_subplot(composite_img_dummy, layout_specs,
+                           codas_dummy_data, 0, coda_plot_type, imagePlots[layout_specs])
+      # Store a blank plot.
+      blank_subplot_datas[str(layout_specs)] = imagePlots[layout_specs].get_empty_plot_image()
 
 # Show the dummy visualization frame if desired.
 if show_visualization_window or debug_composite_layout:
@@ -1649,28 +1680,32 @@ for (frame_index, current_time_s) in enumerate(output_video_timestamps_s):
   # Update coda visualizations.
   for (device_friendlyName, layout_specs) in composite_layout.items():
     device_id = device_friendlyName_to_id(device_friendlyName)
-    if device_id != '_coda_annotations_shane':
+    if device_id not in ['_coda_annotations_biology', '_coda_annotations_haifa']:
       continue
+    if '_coda_annotations_biology' in device_id:
+      coda_source = 'biology'
+    elif '_coda_annotations_haifa' in device_id:
+      coda_source = 'haifa'
     # Find codas within the current plot window.
     t0 = time.time()
     plot_start_time_s = current_time_s - codas_plot_duration_beforeCurrentTime_s
     plot_end_time_s = current_time_s + codas_plot_duration_afterCurrentTime_s
-    coda_data_toPlot = dict([(key, []) for key in codas_data])
+    coda_data_toPlot = dict([(key, []) for key in codas_data[coda_source]])
     found_active_annotation_file = False
-    for coda_index in range(len(codas_data['coda_start_times_s'])):
-      coda_start_time_s = codas_data['coda_start_times_s'][coda_index]
-      coda_end_time_s = codas_data['coda_end_times_s'][coda_index]
-      click_times_s = codas_data['click_times_s'][coda_index]
+    for coda_index in range(len(codas_data[coda_source]['coda_start_times_s'])):
+      coda_start_time_s = codas_data[coda_source]['coda_start_times_s'][coda_index]
+      coda_end_time_s = codas_data[coda_source]['coda_end_times_s'][coda_index]
+      click_times_s = codas_data[coda_source]['click_times_s'][coda_index]
       if (coda_start_time_s >= plot_start_time_s and coda_start_time_s <= plot_end_time_s) \
         or (coda_end_time_s >= plot_start_time_s and coda_end_time_s <= plot_end_time_s):
-          for key in codas_data:
-            coda_data_toPlot[key].append(codas_data[key][coda_index])
+          for key in codas_data[coda_source]:
+            coda_data_toPlot[key].append(codas_data[coda_source][key][coda_index])
           found_active_annotation_file = True
     # If there were no codas, determine whether an annotations file is still active and there were just no clicks for this plot.
     if not found_active_annotation_file:
-      for coda_file_index in range(len(codas_files_start_times_s)):
-        if current_time_s >= codas_files_start_times_s[coda_file_index] \
-            and current_time_s <= codas_files_end_times_s[coda_file_index]:
+      for coda_file_index in range(len(codas_files_start_times_s[coda_source])):
+        if current_time_s >= codas_files_start_times_s[coda_source][coda_file_index] \
+            and current_time_s <= codas_files_end_times_s[coda_source][coda_file_index]:
           found_active_annotation_file = True
           break
     duration_s_codasParsing += time.time() - t0
