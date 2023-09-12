@@ -30,6 +30,7 @@ from PIL import Image
 import ffmpeg
 import pysrt
 import csv
+from collections import OrderedDict
 
 import numpy as np
 import dateutil.parser
@@ -473,6 +474,8 @@ def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s
   click_times_s = []
   whale_indexes = []
   audio_file_start_times_s = {}
+  annotation_start_times_perAudioFile_s = OrderedDict()
+  annotation_end_times_perAudioFile_s = OrderedDict()
   
   # Get the data for each annotated coda.
   for coda_row in csv_rows[1:]: # row 0 is the header row
@@ -509,8 +512,14 @@ def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s
     click_times_s.append(click_times_s_forCoda)
     click_icis_s.append(click_icis_s_forCoda)
     whale_indexes.append(whale_index)
+    # Store the start/end times of annotations for each audio file.
+    annotation_start_times_perAudioFile_s.setdefault(audio_file_keyword, 9e9)
+    annotation_end_times_perAudioFile_s.setdefault(audio_file_keyword, 0)
+    annotation_start_times_perAudioFile_s[audio_file_keyword] = min(click_times_s_forCoda[0], annotation_start_times_perAudioFile_s[audio_file_keyword])
+    annotation_end_times_perAudioFile_s[audio_file_keyword] = max(click_times_s_forCoda[-1], annotation_end_times_perAudioFile_s[audio_file_keyword])
     
-  return (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes)
+  return (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes,
+          annotation_start_times_perAudioFile_s, annotation_end_times_perAudioFile_s)
 
   
   

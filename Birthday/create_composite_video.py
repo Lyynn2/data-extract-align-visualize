@@ -185,8 +185,8 @@ device_friendlyNames = {
 # #
 # Haifa annotations:
 output_video_start_time_str = '2023-07-08 11:40:30 -0400'
-output_video_duration_s = 6600
-#
+output_video_duration_s = 9949 # 9931
+# #
 # # Hydrophone file 280:
 # output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
 # output_video_duration_s = 184.32
@@ -194,6 +194,10 @@ output_video_duration_s = 6600
 # # Testing for hydrophone file 280:
 # output_video_start_time_str = '2023-07-08 11:55:10 -0400'
 # output_video_duration_s = 60
+#
+# # Testing spanning annotation files including 280:
+# output_video_start_time_str = '2023-07-08 11:50:10 -0400'
+# output_video_duration_s = 20*60
 #
 # # Testing for spanning hydrophone files 279-280:
 # output_video_start_time_str = '2023-07-08 11:53:00 -0400'
@@ -738,7 +742,8 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
         print()
     
     elif is_coda_annotations(filepath):
-      (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes) = \
+      (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes,
+       annotation_start_times_perAudioFile_s, annotation_end_times_perAudioFile_s) = \
         get_coda_annotations(filepath, data_dir_root, adjust_start_time_s)
       if '_coda_annotations_biology' in data_dir.lower():
         source = 'biology'
@@ -752,8 +757,8 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
       codas_data[source]['click_times_s'].extend(click_times_s)
       codas_data[source]['whale_indexes'].extend(whale_indexes)
       if len(click_times_s) > 0:
-        codas_files_start_times_s[source].append(click_times_s[0][0])
-        codas_files_end_times_s[source].append(click_times_s[-1][-1])
+        codas_files_start_times_s[source].extend(list(annotation_start_times_perAudioFile_s.values()))
+        codas_files_end_times_s[source].extend(list(annotation_end_times_perAudioFile_s.values()))
       del media_infos[device_id]
 
 # Remove devices with no data for the composite video.
