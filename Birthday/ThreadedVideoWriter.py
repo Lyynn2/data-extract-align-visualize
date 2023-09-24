@@ -1,6 +1,7 @@
+
 ############
 #
-# Copyright (c) 2023 Joseph DelPreto and MIT CSAIL
+# Copyright (c) 2023 Joseph DelPreto / MIT CSAIL and Project CETI
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal

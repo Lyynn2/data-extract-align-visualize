@@ -1,7 +1,7 @@
 
 ############
 #
-# Copyright (c) 2023 Joseph DelPreto and MIT CSAIL
+# Copyright (c) 2023 Joseph DelPreto / MIT CSAIL and Project CETI
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,7 @@
 # IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 # Created 2023 by Joseph DelPreto [https://josephdelpreto.com].
+# [can add additional updates and authors as desired]
 #
 ############
 
@@ -66,80 +67,39 @@ from ImagePlot import ImagePlot
 import pyqtgraph
 import distinctipy
 
-from helpers import *
+from helpers_synchronization import *
+from helpers_data_extraction import *
+from helpers_various import *
 
 ######################################################
 # CONFIGURATION
 ######################################################
 
-# Specify the root data directory, which contains subfolders for each device
+# Specify the root data directory, which contains subfolders for each device.
+# The output video will also be saved in this folder.
 data_dir_root = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
 
 # Specify the subplot layout of device streams in the output video.
 # Each value is (row, column, rowspan, colspan).
 composite_layout = OrderedDict([
-  ('Mavic (CETI)'         , (0, 0, 2, 2)),
-  ('Mavic (DSWP)'         , (0, 2, 2, 2)),
-  ('Canon (Gruber)'       , (2, 0, 1, 1)),
-  ('Canon (DelPreto)'     , (2, 1, 1, 1)),
-  ('Phone (DelPreto)'     , (2, 1, 1, 1)),
-  ('GoPro (DelPreto)'     , (2, 1, 1, 1)),
-  ('Canon (DSWP)'         , (2, 2, 1, 1)),
-  ('Drone Positions'      , (2, 3, 1, 1)),
-  ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
-  ('Phone (Pagani)'       , (3, 1, 1, 1)),
-  ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
-  ('Phone (Aluma)'        , (3, 3, 1, 1)),
+  # ('Mavic (CETI)'         , (0, 0, 2, 2)),
+  # ('Mavic (DSWP)'         , (0, 2, 2, 2)),
+  # ('Canon (Gruber)'       , (2, 0, 1, 1)),
+  # ('Canon (DelPreto)'     , (2, 1, 1, 1)),
+  # ('Phone (DelPreto)'     , (2, 1, 1, 1)),
+  # ('GoPro (DelPreto)'     , (2, 1, 1, 1)),
+  # ('Canon (DSWP)'         , (2, 2, 1, 1)),
+  # ('Drone Positions'      , (2, 3, 1, 1)),
+  # ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
+  # ('Phone (Pagani)'       , (3, 1, 1, 1)),
+  # ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
+  # ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
-  ('Codas Haifa (ICI)'    , (5, 0, 1, 4)),
+  # ('Codas Haifa (ICI)'    , (5, 0, 1, 4)),
   # ('Codas Haifa (TFS)'    , (5, 0, 1, 4)),
-  ('Codas Biology (ICI)'  , (6, 0, 1, 4)),
+  # ('Codas Biology (ICI)'  , (6, 0, 1, 4)),
   # ('Codas Biology (TFS)'  , (6, 0, 1, 4)),
 ])
-
-# Specify the time zone offset to get local time of this data collection day from UTC.
-# Note that in the future this could probably be determined automatically.
-localtime_offset_s = -4*3600
-localtime_offset_str = '-0400'
-# Specify whether drone timestamps in SRT files are in local or UTC time.
-drone_srt_timestamps_are_local_time = {
-  'CETI-DJI_MAVIC3-1'          : False,
-  'DSWP-DJI_MAVIC3-2'          : True,
-}
-
-# Specify offsets to add to timestamps extracted from filenames.
-# For each device, can specify:
-#  A single number, which will be added to all timestamps for that device.
-#  An ordered dictionary where each entry is (started-before-this-device-time, offset).
-#   A started-before-this-device-time of -1 indicates timestamps after the previous cutoff.
-#   For example, if the dictionary is [(5, 100), (8, 101), (-1, 102)] then device timestamps
-#    within [0, 5] will have 100s added to them, timestamps within (5, 8] will
-#    have 101 seconds added to them, and timestamps > 8 will have 102s added to them.
-epoch_offsets_toAdd_s = {
-  'CETI-DJI_MAVIC3-1'          : OrderedDict([(1688829599.0, 0.79859),
-                                              (1688833020.0, 0.79859),
-                                              (1688836800.0, 0.79859),
-                                              (1688838240.0, 0.79859),
-                                              (1688839260.0, 0.434701),
-                                              (-1,           0.434701)]),
-  'DSWP-DJI_MAVIC3-2'          : OrderedDict([(1688829599.0, 6.097219),
-                                              (1688833020.0, 2.10833),
-                                              (1688836800.0, 6.297219),
-                                              (1688838240.0, 6.499997),
-                                              (1688839260.0, 6.499997),
-                                              (-1,           2.299997)]),
-  'DG-CANON_EOS_1DX_MARK_III-1': 14603.81506,
-  'JD-CANON_REBEL_T5I'         : OrderedDict([(1688831658, 14.37973),
-                                              (-1,         15.244)]),
-  'DSWP-CANON_EOS_70D-1'       : 14486.21306,
-  'DSWP-KASHMIR_MIXPRE6-1'     : 32.7085,
-  'Misc/Aluma'                 : -0.55946,
-  'Misc/Baumgartner'           : 3.303,
-  'Misc/Pagani'                : 0, # used as reference time
-  'Misc/SalinoHugg'            : -0.13826,
-  'Misc/DelPreto_Pixel5'       : 26.39846,
-  'Misc/DelPreto_GoPro'        : 8.52572,
-}
 
 # Specify friendly names for each device, which will be printed on the output video.
 # This also specifies the device IDs that exist, and directories will be searched accordingly.
@@ -183,13 +143,13 @@ device_friendlyNames = {
 # output_video_start_time_str = '2023-07-08 10:20:13 -0400'
 # output_video_duration_s = 19579
 # #
-# Haifa annotations:
-output_video_start_time_str = '2023-07-08 11:40:30 -0400'
-output_video_duration_s = 9949 # 9931
+# # Haifa annotations:
+# output_video_start_time_str = '2023-07-08 11:40:30 -0400'
+# output_video_duration_s = 9949 # 9931
 # #
-# # Hydrophone file 280:
-# output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
-# output_video_duration_s = 184.32
+# Hydrophone file 280:
+output_video_start_time_str = '2023-07-08 11:53:34.72 -0400' #'2023-07-08 11:53:34.7085 -0400' (after adding an offset of 32.7085)
+output_video_duration_s = 184.32
 #
 # # Testing for hydrophone file 280:
 # output_video_start_time_str = '2023-07-08 11:55:10 -0400'
@@ -377,7 +337,7 @@ output_video_banner_font = cv2.FONT_HERSHEY_SIMPLEX
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
 output_video_filepath = os.path.join(data_dir_root,
-                                     'composite_video_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
+                                     'composite_video_TEST_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
                                      % (output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
                                         composite_layout_column_width,
@@ -403,52 +363,6 @@ def device_friendlyName_to_id(device_friendlyName_toFind):
     if device_friendlyName == device_friendlyName_toFind:
       return device_id
   return None
-
-# Add the desired epoch offset for a given device at a given start time.
-def adjust_start_time_s(media_start_time_s, device_id):
-  if isinstance(epoch_offsets_toAdd_s[device_id], dict):
-    cutoff_times = list(epoch_offsets_toAdd_s[device_id].keys())
-    epoch_offsets_toAdd_s_forDevice = list(epoch_offsets_toAdd_s[device_id].values())
-    if cutoff_times[-1] == -1:
-      cutoff_times[-1] = 9e9
-    cutoff_index = np.searchsorted(cutoff_times, media_start_time_s)
-    return media_start_time_s + epoch_offsets_toAdd_s_forDevice[cutoff_index]
-  else:
-    return media_start_time_s + epoch_offsets_toAdd_s[device_id]
-  
-# Find a timestamp from a device that most closely matches a target timestamp.
-# Will return the index of that matched timestamp within the device's array of timestamps.
-# If there is no such timestamp within a specified threshold of the target, returns None.
-def get_index_for_time_s(timestamps_s, target_time_s, timestamp_to_target_thresholds_s):
-  if timestamps_s.shape[0] == 1:
-    # If there is only one timestamp, consider that the best one.
-    best_index = 0
-  else:
-    # Find the index where the target timestamp would be inserted without changing the sort order.
-    # This is much faster than using something like numpy.where(), since it can assume the input is sorted.
-    next_index_pastTarget = timestamps_s.searchsorted(target_time_s)
-    # If it returned the length of the array, decrement it to make it a valid index.
-    if next_index_pastTarget == timestamps_s.shape[0]:
-      next_index_pastTarget -= 1
-    # If it returned the first element, use that as the best index.
-    if next_index_pastTarget == 0:
-      best_index = 0
-    else:
-      # We have placed the target between two device timestamps.
-      # Now see which one of those two is closer to the target.
-      index_candidates = np.array([next_index_pastTarget-1, next_index_pastTarget])
-      dt_candidates = np.abs(timestamps_s[index_candidates] - target_time_s)
-      if dt_candidates[0] < dt_candidates[1]:
-        best_index = index_candidates[0]
-      else:
-        best_index = index_candidates[1]
-  # Check if the closest timestamp is within the threshold region of the target.
-  if timestamps_s[best_index] < (target_time_s - timestamp_to_target_thresholds_s[0]):
-    return None
-  if timestamps_s[best_index] > (target_time_s + timestamp_to_target_thresholds_s[1]):
-    return None
-  # We found a good timestamp! Return its index.
-  return best_index
 
 # Add a banner to the output frame that displays the current timestamp.
 def add_timestamp_banner(img, timestamp_s):
@@ -556,160 +470,41 @@ def get_subplot_size(layout_specs):
 #     data is a video reader object
 #   If filepath points to a wav file:
 #     timestamps_s is a numpy array of epoch timestamps for every sample
-#     if plotting waveforms, data is an [num_samples x num_channels] matrix of audio data
-#     if plotting spectrograms, data is an [num_frequency_bins, num_time_bins, 3] image matrix
+#     if requesting waveforms, data is an [num_samples x num_channels] matrix of audio data
+#     if requesting spectrograms, data is a tuple with (spectrogram, spectrogram_t, spectrogram_f).
 #   If filepath points to an image:
 #     timestamps_s is a single-element numpy array with the epoch timestamps of the image
 #     data is the filepath again
 media_infos = OrderedDict()
 
-# For drone data, will create a dictionary of the same format
-#   [device_id][filepath] = (timestamps_s, data) where
-#   timestamps_s is a numpy array of epoch timestamps for every frame
-#   data is a dictionary returned by helpers.get_drone_srt_data()
-drone_datas = OrderedDict()
-
-# For coda annotations, will create one combined dictionary from all files.
-codas_data = dict([(source, {'coda_start_times_s': [],
-                             'coda_end_times_s': [],
-                             'click_icis_s': [],
-                             'click_times_s': [],
-                             'whale_indexes': [],
-                             }) for source in ['biology', 'haifa']])
-codas_files_start_times_s = dict([(source, []) for source in ['biology', 'haifa']])
-codas_files_end_times_s = dict([(source, []) for source in ['biology', 'haifa']])
-
 print()
-print('Extracting timestamps and pointers to data for every frame/photo/audio')
+print('Getting timestamps and pointers to video/image/audio data for every frame/photo/sample')
 for (device_friendlyName, layout_specs) in composite_layout.items():
   (row, col, rowspan, colspan) = layout_specs
   device_id = device_friendlyName_to_id(device_friendlyName)
-  # Find data files for this device.
-  if 'Misc' in device_id:
-    data_dir = os.path.join(data_dir_root, 'Misc')
-    filename_keyword = device_id.split('/')[1]
-    filepaths = glob.glob(os.path.join(data_dir, '*%s*' % filename_keyword))
-  else:
-    data_dir = os.path.join(data_dir_root, device_id)
-    filepaths = glob.glob(os.path.join(data_dir, '*'))
-  filepaths = [filepath for filepath in filepaths if not os.path.isdir(filepath)]
-  if len(filepaths) == 0:
-    continue
+  (subplot_width, subplot_height) = get_subplot_size(layout_specs)
   
-  # Skip files that start after the composite video ends.
-  # Do this now, so the below loop can know how many files there are (for printing purposes and whatnot).
-  filepaths_toKeep = []
-  if 'coda_annotations' not in device_id:
-    for (file_index, filepath) in enumerate(filepaths):
-      # Get the start time in epoch time
-      filename = os.path.basename(filepath)
-      start_time_ms = int(re.search('\d{13}', filename)[0])
-      start_time_s = start_time_ms/1000.0
-      start_time_s = adjust_start_time_s(start_time_s, device_id)
-      if start_time_s <= (output_video_start_time_s+output_video_duration_s):
-        filepaths_toKeep.append(filepath)
-  else:
-    filepaths_toKeep = filepaths
-  print('  Found %4d files for device [%s] (ignored %d files starting after the composite video)' % (len(filepaths_toKeep), device_friendlyName, len(filepaths) - len(filepaths_toKeep)))
-  filepaths = filepaths_toKeep
-
-  # Loop through each file to extract its timestamps and data pointers.
-  media_infos[device_id] = {}
-  for (file_index, filepath) in enumerate(filepaths):
-    # Get the start time in epoch time from the filename.
-    filename = os.path.basename(filepath)
-    if 'coda_annotations' not in device_id:
-      start_time_ms = int(re.search('\d{13}', filename)[0])
-      start_time_s = start_time_ms/1000.0
-      start_time_s = adjust_start_time_s(start_time_s, device_id)
-    else:
-      start_time_s = None
+  # Extract the timestamped data for this device.
+  media_info = get_timestamped_data_audioVideoImage(
+                data_dir_root, [device_id], device_friendlyNames=[device_friendlyName],
+                audio_type=audio_plot_type, audio_resample_rate_hz=audio_resample_rate_hz,
+                audio_spectrogram_target_window_s=audio_spectrogram_target_window_s,
+                video_target_width=subplot_width, video_target_height=subplot_height,
+                start_time_cutoff_s=output_video_start_time_s, end_time_cutoff_s=(output_video_start_time_s+output_video_duration_s),
+                suppress_printing=False)
     
-    # Define a helper to extract drone data,
-    #  since we may do it from encountering an SRT file or a drone video.
-    def get_drone_datas_entry(filepath):
-      drone_data = get_drone_srt_data(filepath)
-      if drone_data is not None:
-        timestamps_s = drone_data['timestamp_s']
-        # Adjust for time zone offset, since the filename epochs correct for it
-        #  but the SRT data does not.  So this will get us to the filename reference frame,
-        #  and allow the manually specified offsets to apply.
-        if not drone_srt_timestamps_are_local_time[device_id]:
-          timestamps_s = timestamps_s + localtime_offset_s
-        # Apply the manually specified offsets.
-        start_timestamp_s = adjust_start_time_s(timestamps_s[0], device_id)
-        timestamps_s = timestamps_s + (start_timestamp_s - timestamps_s[0])
-        # Return the drone data.
-        return (timestamps_s, drone_data)
-      return (None, None)
-      
-    # Process the data/timestamps for each file.
-    
-    if is_drone_data(filepath):
-      drone_datas_entry = get_drone_datas_entry(filepath)
-      if drone_datas_entry[0] is not None:
-        drone_datas.setdefault(device_id, {})
-        drone_datas[device_id][filepath] = drone_datas_entry
-      
-    if is_video(filepath):
-      (subplot_width, subplot_height) = get_subplot_size(layout_specs)
-      (video_reader, frame_rate, num_frames) = get_video_reader(filepath,
-                                                                target_width=subplot_width,
-                                                                target_height=subplot_height)
-      # For drones, extract frame timestamps from an SRT file if one exists.
-      # Otherwise, generate timestamps assuming a constant frame rate.
-      drone_datas_entry = get_drone_datas_entry(filepath)
-      if drone_datas_entry[0] is not None:
-        timestamps_s = drone_datas_entry[0]
-      else:
-        frame_duration_s = 1/frame_rate
-        timestamps_s = start_time_s + np.arange(start=0, stop=num_frames)*frame_duration_s
-      media_infos[device_id][filepath] = (timestamps_s, video_reader)
-    
-    elif is_image(filepath):
-      timestamps_s = np.array([start_time_s])
-      media_infos[device_id][filepath] = (timestamps_s, filepath)
-    
-    elif is_audio(filepath):
-      if file_index > 0:
-        print('\r', end='')
-      print('    Loading file %2d/%2d %s' % (file_index+1, len(filepaths), ' '*15), end='')
-      (audio_rate, audio_data) = wavfile.read(filepath)
-      num_samples = audio_data.shape[0]
-      timestamps_s = start_time_s + np.arange(start=0, stop=num_samples)/audio_rate
-      # Only process/store it if it will be needed for the composite video.
-      audio_start_time_s = timestamps_s[0]
-      audio_end_time_s = timestamps_s[-1]
-      if audio_end_time_s < output_video_start_time_s \
-          or audio_start_time_s > (output_video_start_time_s+output_video_duration_s):
-        if file_index == len(filepaths)-1:
-          print()
-        continue
-      # Resample the data.
-      if audio_resample_rate_hz != audio_rate:
-        print('\r', end='')
-        print('    Resampling file %2d/%2d %s' % (file_index+1, len(filepaths), ' '*15), end='')
-        fn_interpolate_audio = interpolate.interp1d(
-            timestamps_s,  # x values
-            audio_data,    # y values
-            axis=0,        # axis of the data along which to interpolate
-            kind='linear', # interpolation method, such as 'linear', 'zero', 'nearest', 'quadratic', 'cubic', etc.
-            fill_value='extrapolate' # how to handle x values outside the original range
-        )
-        num_samples = int(num_samples * (audio_resample_rate_hz/audio_rate))
-        timestamps_s_resampled = start_time_s + np.arange(start=0, stop=num_samples)/audio_resample_rate_hz
-        audio_data_resampled = fn_interpolate_audio(timestamps_s_resampled)
-        audio_data = audio_data_resampled
-        timestamps_s = timestamps_s_resampled
-      # Compute a spectrogram of the entire file.
-      if audio_plot_type == 'spectrogram':
-        print('\r', end='')
-        print('    Computing spectrogram for file %2d/%2d     ' % (file_index+1, len(filepaths)), end='')
-        spectrogram_f, spectrogram_t, spectrogram = \
-          signal.spectrogram(audio_data[:,0], audio_resample_rate_hz,
-                             window=signal.get_window('tukey', int(audio_spectrogram_target_window_s * audio_resample_rate_hz)),
-                             scaling='density',  # density or spectrum (default is density)
-                             nperseg=None)
+  # Perform any additional processing on the data,
+  #  then store it in the appropriate dictionary.
+  if device_id in media_info:
+    media_infos[device_id] = {}
+    for (filepath, (timestamps_s, data)) in media_info[device_id].items():
+      if is_video(filepath):
+        media_infos[device_id][filepath] = (timestamps_s, data)
+      elif is_image(filepath):
+        media_infos[device_id][filepath] = (timestamps_s, data)
+      elif is_audio(filepath) and audio_plot_type == 'spectrogram':
+        # Get the computed spectrogram of the entire file.
+        (spectrogram, spectrogram_t, spectrogram_f) = data
         # Determine epoch timestamps of each entry in the spectrogram.
         timestamps_s = spectrogram_t + timestamps_s[0]
         # Truncate to the desired frequency range.
@@ -736,42 +531,59 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
         spectrogram_colormapped = audio_spectrogram_colormap.map(spectrogram/audio_spectrogram_colorbar_levels[1])[:,:,(2,1,0)]
         # Save the information
         media_infos[device_id][filepath] = (timestamps_s, spectrogram_colormapped)
-      elif audio_plot_type == 'waveform':
-        media_infos[device_id][filepath] = (timestamps_s, audio_data)
-      if file_index == len(filepaths)-1:
-        print()
     
-    elif is_coda_annotations(filepath):
-      (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes,
-       annotation_start_times_perAudioFile_s, annotation_end_times_perAudioFile_s) = \
-        get_coda_annotations(filepath, data_dir_root, adjust_start_time_s)
-      if '_coda_annotations_biology' in data_dir.lower():
-        source = 'biology'
-      elif '_coda_annotations_haifa' in data_dir.lower():
-        source = 'haifa'
-      else:
-        raise AssertionError('Unknown coda annotations source for [%s]' % filepath)
-      codas_data[source]['coda_start_times_s'].extend(coda_start_times_s)
-      codas_data[source]['coda_end_times_s'].extend(coda_end_times_s)
-      codas_data[source]['click_icis_s'].extend(click_icis_s)
-      codas_data[source]['click_times_s'].extend(click_times_s)
-      codas_data[source]['whale_indexes'].extend(whale_indexes)
-      if len(click_times_s) > 0:
-        codas_files_start_times_s[source].extend(list(annotation_start_times_perAudioFile_s.values()))
-        codas_files_end_times_s[source].extend(list(annotation_end_times_perAudioFile_s.values()))
-      del media_infos[device_id]
+# For drone data, will create a dictionary of the same format
+#   [device_id][filepath] = (timestamps_s, data) where
+#   timestamps_s is a numpy array of epoch timestamps for every frame
+#   data is a dictionary returned by helpers.get_drone_srt_data()
+drone_datas = OrderedDict()
+print()
+print('Getting timestamps and pointers to data for every drone frame')
+for (device_friendlyName, layout_specs) in composite_layout.items():
+  (row, col, rowspan, colspan) = layout_specs
+  device_id = device_friendlyName_to_id(device_friendlyName)
+  (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+  
+  # Extract the timestamped data for this device.
+  drone_data = get_timestamped_data_drones(
+                  data_dir_root, [device_id], [device_friendlyName],
+                  end_time_cutoff_s=(output_video_start_time_s+output_video_duration_s),
+                  suppress_printing=False)
+  
+  # Perform any additional processing on the data,
+  #  then store it in the appropriate dictionary.
+  if device_id in drone_data:
+    drone_datas[device_id] = {}
+    for (filepath, (timestamps_s, data)) in drone_data[device_id].items():
+      drone_datas[device_id][filepath] = (timestamps_s, data)
 
-# Remove devices with no data for the composite video.
-device_ids_to_remove = []
-for (device_id, device_friendlyName) in device_friendlyNames.items():
-  if device_id in media_infos and len(media_infos[device_id]) == 0:
-    device_ids_to_remove.append(device_id)
-if len(device_ids_to_remove) > 0:
-  print('Ignoring the following %d devices that have no data for the composite video: %s' % (len(device_ids_to_remove), str(device_ids_to_remove)))
-  for device_id in device_ids_to_remove:
-    del composite_layout[device_friendlyNames[device_id]]
-    del device_friendlyNames[device_id]
-    del media_infos[device_id]
+# For coda annotations, will create one combined dictionary from all files.
+codas_data = dict([(source, {'coda_start_times_s': [],
+                             'coda_end_times_s': [],
+                             'click_icis_s': [],
+                             'click_times_s': [],
+                             'whale_indexes': [],
+                             }) for source in ['biology', 'haifa']])
+codas_files_start_times_s = dict([(source, []) for source in ['biology', 'haifa']])
+codas_files_end_times_s = dict([(source, []) for source in ['biology', 'haifa']])
+print()
+print('Getting coda annotations')
+for (device_friendlyName, layout_specs) in composite_layout.items():
+  (row, col, rowspan, colspan) = layout_specs
+  device_id = device_friendlyName_to_id(device_friendlyName)
+  (subplot_width, subplot_height) = get_subplot_size(layout_specs)
+  
+  # Extract the timestamped data for this device.
+  coda_data = get_timestamped_data_codas(
+                data_dir_root, device_ids=[device_id], device_friendlyNames=[device_friendlyName],
+                suppress_printing=False)
+  
+  # Perform any additional processing on the data,
+  #  then store it in the appropriate dictionary.
+  for (source, data) in coda_data.items():
+    codas_data[source] = data
+    
+print()
 
 ######################################################
 # VISUALIZATION FUNCTIONS

@@ -1,7 +1,7 @@
 
 ############
 #
-# Copyright (c) 2023 Joseph DelPreto and MIT CSAIL
+# Copyright (c) 2023 Joseph DelPreto / MIT CSAIL and Project CETI
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,7 @@
 # IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 # Created 2023 by Joseph DelPreto [https://josephdelpreto.com].
+# [can add additional updates and authors as desired]
 #
 ############
 
@@ -28,17 +29,11 @@ import cv2
 import decord
 from PIL import Image
 import ffmpeg
-import pysrt
-import csv
-from collections import OrderedDict
 
 import numpy as np
 import dateutil.parser
 from datetime import datetime
-from operator import itemgetter
-import re
 import os
-import glob
 
 try:
   import pyqtgraph
@@ -395,136 +390,9 @@ def compress_video(input_filepath, output_filepath, target_total_bitrate_b_s):
                 **ffmpeg_args
                 ).overwrite_output().run()
 
-############################################
-# DRONE DATA
-############################################
-
-# Extract data from a drone SRT file associated with the given video file.
-# Assumes the SRT file is in the same directory and has the same base name as the video file.
-# Return a dictionary with timestamps, GPS, altitude, and image settings for each frame.
-def get_drone_srt_data(video_filepath):
-  # Open the SRT file if it exists.
-  srt_filepath = '%s.srt' % (os.path.splitext(video_filepath)[0])
-  if not os.path.exists(srt_filepath):
-    return None
-  srt = pysrt.open(srt_filepath)
-  num_frames = len(srt)
-  
-  # Initialize arrays for the data.
-  drone_data = {
-    'timestamp_str': ['']*num_frames,
-    'timestamp_s': np.nan*np.ones(shape=(num_frames,)),
-    'iso': np.nan*np.ones(shape=(num_frames,)),
-    'shutter': np.nan*np.ones(shape=(num_frames, 2)),
-    'f_number': np.nan*np.ones(shape=(num_frames,)),
-    'exposure_value': np.nan*np.ones(shape=(num_frames,)),
-    'color_temperature': np.nan*np.ones(shape=(num_frames,)),
-    'focal_length': np.nan*np.ones(shape=(num_frames,)),
-    'color_mode': ['']*num_frames,
-    'latitude': np.nan*np.ones(shape=(num_frames,)),
-    'longitude': np.nan*np.ones(shape=(num_frames,)),
-    'altitude_relative_m': np.nan*np.ones(shape=(num_frames,)),
-    'altitude_absolute_m': np.nan*np.ones(shape=(num_frames,)),
-  }
-  
-  # Parse the data for each frame.
-  for (frame_index, srt_frame) in enumerate(srt):
-    text_lines = srt_frame.text_without_tags.split('\n')
-    drone_data['timestamp_str'][frame_index] = text_lines[1]
-    drone_data['timestamp_s'][frame_index] = time_str_to_time_s(text_lines[1])
-    data_line = text_lines[2]
-    data_line = data_line.replace(' ', '')
-    drone_data['iso'][frame_index] = float(data_line.split('[iso:')[1].split(']')[0].strip())
-    drone_data['shutter'][frame_index] = [float(x.strip()) for x in data_line.split('[shutter:')[1].split(']')[0].split('/')]
-    drone_data['f_number'][frame_index] = float(data_line.split('[fnum:')[1].split(']')[0].strip())
-    drone_data['exposure_value'][frame_index] = float(data_line.split('[ev:')[1].split(']')[0].strip())
-    drone_data['color_temperature'][frame_index] = float(data_line.split('[ct:')[1].split(']')[0].strip())
-    drone_data['focal_length'][frame_index] = float(data_line.split('[focal_len:')[1].split(']')[0].strip())
-    drone_data['color_mode'][frame_index] = data_line.split('[color_md:')[1].split(']')[0].strip()
-    drone_data['latitude'][frame_index] = float(data_line.split('[latitude:')[1].split(']')[0].strip())
-    drone_data['longitude'][frame_index] = float(data_line.split('[longitude:')[1].split(']')[0].strip())
-    drone_data['altitude_relative_m'][frame_index] = float(data_line.split('[rel_alt:')[1].split('abs_alt')[0].strip())
-    drone_data['altitude_absolute_m'][frame_index] = float(data_line.split('abs_alt:')[1].split(']')[0].strip())
-  
-  return drone_data
-
-############################################
-# CODA ANNOTATIONS
-############################################
-
-# Parse coda annotations from a CSV file.
-def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s_fn):
-  # Read the CSV data.
-  annotations_file = open(annotation_filepath, 'r')
-  csv_reader = csv.reader(annotations_file)
-  csv_rows = list(csv_reader)
-  annotations_file.close()
-  
-  # Get the header indexes for particular columns of data.
-  headers = csv_rows[0]
-  audio_file_keyword_columnIndex = [i for (i, h) in enumerate(headers) if 'recording' in h.lower()][0]
-  whale_columnIndex = [i for (i, h) in enumerate(headers) if 'whale' in h.lower()][0]
-  tfs_columnIndex = [i for (i, h) in enumerate(headers) if 'tfs' in h.lower()][0]
-  ici_columnIndexes = [i for (i, h) in enumerate(headers) if 'ici' in h.lower()]
-  
-  # Create a list of data for each desired field.
-  coda_start_times_s = []
-  coda_end_times_s = []
-  click_icis_s = []
-  click_times_s = []
-  whale_indexes = []
-  audio_file_start_times_s = {}
-  annotation_start_times_perAudioFile_s = OrderedDict()
-  annotation_end_times_perAudioFile_s = OrderedDict()
-  
-  # Get the data for each annotated coda.
-  for coda_row in csv_rows[1:]: # row 0 is the header row
-    # Get the start time of the file in this row.
-    audio_file_keyword = coda_row[audio_file_keyword_columnIndex]
-    if audio_file_keyword not in audio_file_start_times_s:
-      # Find the wav file that the CSV references.
-      filepaths = glob.glob(os.path.join(data_root_dir, '*/%s*.wav' % audio_file_keyword), recursive=True)
-      if len(filepaths) == 0:
-        raise AssertionError('Could not find an audio file for coda annotations with keyword [%s]' % audio_file_keyword)
-      if len(filepaths) > 1:
-        raise AssertionError('Found too many audio files for coda annotations with keyword [%s]' % audio_file_keyword)
-      audio_filepath = filepaths[0]
-      # Get the device ID as the name of its parent folder.
-      device_id = os.path.split(os.path.dirname(audio_filepath))[-1]
-      # Get the start time of the file from its filename and the specified offset for this device.
-      filename = os.path.basename(audio_filepath)
-      start_time_ms = int(re.search('\d{13}', filename)[0])
-      start_time_s = start_time_ms/1000.0
-      start_time_s = adjust_start_time_s_fn(start_time_s, device_id)
-      # Store the result to reduce overhead next coda row.
-      audio_file_start_times_s[audio_file_keyword] = start_time_s
-    audio_file_start_time_s = audio_file_start_times_s[audio_file_keyword]
-    # Get click timing information.
-    coda_start_time_s = audio_file_start_time_s + float(coda_row[tfs_columnIndex])
-    click_icis_s_forCoda = [float(ici) for ici in itemgetter(*ici_columnIndexes)(coda_row)]
-    click_icis_s_forCoda = [ici for ici in click_icis_s_forCoda if ici > 0]
-    click_times_s_forCoda = coda_start_time_s + np.cumsum([0.0] + click_icis_s_forCoda)
-    # Get the whale index number.
-    whale_index = int(coda_row[whale_columnIndex])
-    # Store the information in each field array.
-    coda_start_times_s.append(coda_start_time_s)
-    coda_end_times_s.append(coda_start_time_s + sum(click_icis_s_forCoda))
-    click_times_s.append(click_times_s_forCoda)
-    click_icis_s.append(click_icis_s_forCoda)
-    whale_indexes.append(whale_index)
-    # Store the start/end times of annotations for each audio file.
-    annotation_start_times_perAudioFile_s.setdefault(audio_file_keyword, 9e9)
-    annotation_end_times_perAudioFile_s.setdefault(audio_file_keyword, 0)
-    annotation_start_times_perAudioFile_s[audio_file_keyword] = min(click_times_s_forCoda[0], annotation_start_times_perAudioFile_s[audio_file_keyword])
-    annotation_end_times_perAudioFile_s[audio_file_keyword] = max(click_times_s_forCoda[-1], annotation_end_times_perAudioFile_s[audio_file_keyword])
-    
-  return (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes,
-          annotation_start_times_perAudioFile_s, annotation_end_times_perAudioFile_s)
-
-  
   
 ############################################
-# Various
+# Math
 ############################################
 
 # Get the next multiple of a number above a specified target.
