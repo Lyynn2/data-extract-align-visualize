@@ -31,17 +31,19 @@ import os
 from collections import OrderedDict
 
 ##############################################################
-# Specify the filepath for each drone's HDF5 file of metadata.
+# Configuration
 ##############################################################
-data_root_dir = '.'
+
+# Specify the filepath for each drone's HDF5 file of metadata.
+data_root_dir = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
 drone_metadata_filepaths = OrderedDict([
   # Map from device ID to its HDF5 filepath.
-  ('DSWP-DJI_MAVIC3-2', os.path.join(data_root_dir, 'DSWP-DJI_MAVIC3-2_metadata.hdf5')),
-  ('CETI-DJI_MAVIC3-1', os.path.join(data_root_dir, 'CETI-DJI_MAVIC3-1_metadata.hdf5')),
+  ('DSWP-DJI_MAVIC3-2', os.path.join(data_root_dir, 'DSWP-DJI_MAVIC3-2', 'DSWP-DJI_MAVIC3-2_metadata.hdf5')),
+  ('CETI-DJI_MAVIC3-1', os.path.join(data_root_dir, 'CETI-DJI_MAVIC3-1', 'CETI-DJI_MAVIC3-1_metadata.hdf5')),
   ])
 
 ############################################
-# Load the data.
+# Load the drone data.
 ############################################
 for (device_id, drone_metadata_filepath) in drone_metadata_filepaths.items():
   print()
@@ -59,17 +61,24 @@ for (device_id, drone_metadata_filepath) in drone_metadata_filepaths.items():
     timestamps_str = np.array(h5file[video_filename]['time']['aligned_timestamp_str'])
     # The HDF5 file also has original timestamps recorded by the drone during filming.
     # These are not aligned using the manual offsets, and they may not account for time zone offsets.
-    #original_timestamps_s   = np.array(h5file[video_filename]['time']['original_timestamp_s'])
-    #original_timestamps_str   = np.array(h5file[video_filename]['time']['original_timestamp_str'])
+    original_timestamps_s   = np.array(h5file[video_filename]['time']['original_timestamp_s'])
+    original_timestamps_str = np.array(h5file[video_filename]['time']['original_timestamp_str'])
     
     # Load data about the drone's position.
     latitudes            = np.array(h5file[video_filename]['position']['latitude'])
     longitudes           = np.array(h5file[video_filename]['position']['longitude'])
     altitudes_absolute_m = np.array(h5file[video_filename]['position']['altitude_absolute_m'])
     altitudes_relative_m = np.array(h5file[video_filename]['position']['altitude_relative_m'])
+    
+    # Load data about the drone's speed that was estimated from the GPS positions.
+    speed_m_s = np.array(h5file[video_filename]['speed']['estimated_speed_fromGPS_m_s'])
+    is_stationary = np.array(h5file[video_filename]['speed']['estimated_isStationary_fromGPS'])
+    
     # Note that there is 1 frame where the latitude was 0;
     #  presumably this is used to indicate a sensor error.
     # Mark any such frames as NaN for clarity.
+    speed_m_s[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
+    is_stationary[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
     latitudes[np.where(latitudes == 0)[0]] = np.nan
     longitudes[np.where(longitudes == 0)[0]] = np.nan
     

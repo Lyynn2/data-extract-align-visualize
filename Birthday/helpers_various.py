@@ -66,6 +66,36 @@ def time_str_to_time_s(time_str):
   return time_datetime.timestamp()
 
 ############################################
+# DISTANCE
+############################################
+
+# Convert a GPS position to x/y meters from a reference location.
+# longitude_deg and latitude_deg may be numpy arrays to convert multiple locations.
+# The default reference location is the Mango House in Dominica.
+# Returns (x_m, y_m) where x_m is longitude distance and y_m is latitude distance.
+def gps_to_m(longitude_deg, latitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914)):
+  return (longitude_to_m(longitude_deg, reference_location_lonLat_deg=reference_location_lonLat_deg),
+          latitude_to_m(latitude_deg, reference_location_lonLat_deg=reference_location_lonLat_deg))
+
+# Convert a GPS longitude to meters from a reference location.
+# longitude_deg may be a list or numpy array to convert multiple values.
+# The default reference location is the Mango House in Dominica.
+def longitude_to_m(longitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914)):
+  if isinstance(longitude_deg, (list, tuple)):
+    longitude_deg = np.array(longitude_deg)
+  conversion_factor_lon_to_km = (40075 * np.cos(np.radians(reference_location_lonLat_deg[1])) / 360) # From simplified Haversine formula: https://stackoverflow.com/a/39540339
+  return (longitude_deg - reference_location_lonLat_deg[0])*conversion_factor_lon_to_km*1000.0
+
+# Convert a GPS latitude to meters from a reference location.
+# latitude_deg may be a list or numpy array to convert multiple values.
+# The default reference location is the Mango House in Dominica.
+def latitude_to_m(latitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914)):
+  if isinstance(latitude_deg, (list, tuple)):
+    latitude_deg = np.array(latitude_deg)
+  conversion_factor_lat_to_km = (111.32) # From simplified Haversine formula: https://stackoverflow.com/a/39540339
+  return (latitude_deg - reference_location_lonLat_deg[1])*conversion_factor_lat_to_km*1000.0
+
+############################################
 # FILES AND TYPES
 ############################################
 
@@ -133,7 +163,7 @@ def load_image(filepath, target_width=None, target_height=None, method='pil'):
     img = Image.open(filepath)
     if target_width is not None and target_height is not None and get_file_extension(filepath) in ['jpg', 'jpeg']:
       img.draft('RGB', (int(target_width), int(target_height)))
-      print('target:', (target_width, target_height), '  drafted:', img.size, os.path.basename(filepath))
+      #print('target:', (target_width, target_height), '  drafted:', img.size, os.path.basename(filepath))
     img = np.asarray(img)
     if target_width is not None and target_height is not None:
       img = scale_image(img, target_width=target_width, target_height=target_height)
@@ -390,7 +420,81 @@ def compress_video(input_filepath, output_filepath, target_total_bitrate_b_s):
                 **ffmpeg_args
                 ).overwrite_output().run()
 
-  
+############################################
+# Timeseries
+############################################
+
+# Compute a moving average of the given data.
+# Centering can be 'leading', 'trailing', or 'centered'.
+# Mode can be 'same' or 'valid'
+#   If 'same', the output will be the same length as the input
+#     but the initial and final inputs may be averaged over fewer elements than the full window.
+#   If 'valid', will only return elements where the window fully fits on the signal.
+# Returns (time_s, averaged_x)
+def moving_average(time_s, x, window_duration_s, centering, mode='same'):
+  # Compute the window size.
+  signal_length = len(time_s)
+  Fs = 1/np.mean(np.diff(time_s))
+  window_length = min(len(x), round(window_duration_s*Fs))
+  window = np.ones((window_length,))
+  # Compute the full convolution.
+  num_elements = np.convolve(np.ones_like(x), window, 'full')
+  moving_average = np.convolve(x, window, 'full') / num_elements
+  full_length = moving_average.shape[0]
+  # Extract the appropriate subset and time vector.
+  if mode.lower() == 'valid' and centering == 'leading':
+    return (time_s[0:(signal_length - window_length + 1)],
+            moving_average[(window_length-1):(full_length - window_length + 1)])
+  if mode.lower() == 'valid' and centering == 'trailing':
+    return (time_s[(window_length-1):],
+            moving_average[(window_length-1):(full_length - window_length + 1)])
+  if mode.lower() == 'valid' and centering == 'centered':
+    start_index = round((window_length-1)/2)
+    end_index = start_index + (full_length - 2*window_length + 1)
+    return (time_s[start_index:(end_index+1)],
+            moving_average[(window_length-1):(full_length - window_length + 1)])
+  if mode.lower() == 'same' and centering == 'leading':
+    return (time_s[:],
+            moving_average[(window_length-1):])
+  if mode.lower() == 'same' and centering == 'trailing':
+    return (time_s[:],
+            moving_average[0:(full_length - window_length + 1)])
+  if mode.lower() == 'same' and centering == 'centered':
+    start_index = round((window_length-1)/2)
+    end_index = start_index + signal_length - 1
+    return (time_s[:],
+            moving_average[start_index:(end_index+1)])
+
+# Find rising edges in the given signal.
+# Will return the indexes of each rising edge,
+#  where the data at the returned index is the first high point of the step.
+def rising_edges(x, threshold=0.5, include_first_step_if_high=False, include_last_step_if_low=False):
+  if not isinstance(x, np.ndarray):
+    x = np.array(x)
+  # Copied from https://stackoverflow.com/a/50365462
+  edges = list(np.flatnonzero((x[:-1] < threshold) & (x[1:] > threshold))+1)
+  # Explicitly handle edge cases.
+  if x[0] > threshold and include_first_step_if_high:
+    edges = [0] + edges
+  if x[-1] < threshold and include_last_step_if_low:
+    edges = edges + [len(x)-1]
+  return np.array(edges)
+
+# Find falling edges in the given signal.
+# Will return the indexes of each falling edge,
+#  where the data at the returned index is the first low point of the step.
+def falling_edges(x, threshold=0.5, include_first_step_if_low=False, include_last_step_if_high=False):
+  if not isinstance(x, np.ndarray):
+    x = np.array(x)
+  # Adapted from https://stackoverflow.com/a/50365462
+  edges = list(np.flatnonzero((x[:-1] > threshold) & (x[1:] < threshold))+1)
+  # Explicitly handle edge cases.
+  if x[0] < threshold and include_first_step_if_low:
+    edges = [0] + edges
+  if x[-1] > threshold and include_last_step_if_high:
+    edges = edges + [len(x)-1]
+  return np.array(edges)
+
 ############################################
 # Math
 ############################################

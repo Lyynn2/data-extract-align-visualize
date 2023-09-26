@@ -50,6 +50,11 @@ device_ids = [
   'DSWP-DJI_MAVIC3-2',
   ]
 
+# The moving average window to apply to GPS positions when estimating speed.
+speed_moving_average_window_duration_s = 2
+# Define the threshold for considering the drone stationary.
+stationary_speed_threshold_m_s = 0.001
+
 ############################################
 # EXTRACT DATA
 ############################################
@@ -74,6 +79,19 @@ for device_id in device_ids:
   if device_id in drone_data:
     drone_datas[device_id] = {}
     for (filepath, (timestamps_s, data)) in drone_data[device_id].items():
+      # Estimate the speed.
+      (x_m, y_m) = gps_to_m(data['longitude'], data['latitude'])
+      (_, x_m) = moving_average(timestamps_s, x_m, speed_moving_average_window_duration_s, 'centered')
+      (_, y_m) = moving_average(timestamps_s, y_m, speed_moving_average_window_duration_s, 'centered')
+      dx_m = np.diff(x_m)
+      dy_m = np.diff(y_m)
+      dt_s = np.diff(timestamps_s)
+      speed_m_s = np.sqrt(np.square(dx_m) + np.square(dy_m)) / dt_s
+      speed_m_s = np.insert(speed_m_s, 0, speed_m_s[0])
+      is_stationary = speed_m_s <= stationary_speed_threshold_m_s
+      data['estimated_speed_fromGPS_m_s'] = speed_m_s
+      data['estimated_isStationary_fromGPS'] = is_stationary
+      # Store the data in the main dictionary.
       drone_datas[device_id][filepath] = (timestamps_s, data)
   
 ############################################
@@ -107,13 +125,19 @@ for device_id in drone_datas:
     file_group = h5file.create_group(os.path.splitext(os.path.basename(filepath))[0])
     time_group = file_group.create_group('time')
     position_group = file_group.create_group('position')
+    speed_group = file_group.create_group('speed')
     camera_group = file_group.create_group('camera')
     for key in data:
-      if key in ['original_timestamp_s', 'original_timestamp_str', 'aligned_timestamp_s', 'aligned_timestamp_str']:
+      if key in ['original_timestamp_s', 'original_timestamp_str',
+                 'aligned_timestamp_s', 'aligned_timestamp_str']:
         time_group.create_dataset(key, data=data[key])
-      elif key in ['latitude', 'longitude', 'altitude_absolute_m', 'altitude_relative_m']:
+      elif key in ['latitude', 'longitude',
+                   'altitude_absolute_m', 'altitude_relative_m']:
         position_group.create_dataset(key, data=data[key])
-      elif key in ['color_mode', 'color_temperature', 'exposure_value', 'f_number',
+      elif key in ['estimated_speed_fromGPS_m_s', 'estimated_isStationary_fromGPS']:
+        speed_group.create_dataset(key, data=data[key])
+      elif key in ['color_mode', 'color_temperature',
+                   'exposure_value', 'f_number',
                    'focal_length', 'iso', 'shutter']:
         camera_group.create_dataset(key, data=data[key])
       else:
