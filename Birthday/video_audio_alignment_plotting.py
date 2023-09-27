@@ -54,15 +54,16 @@ from helpers_various import *
 ######################################################
 
 # Specify the root data directory, which contains subfolders for each device
-data_dir_root = 'path_to_data_root_folder'
+data_root_dir = 'path_to_data_root_folder'
+assert data_root_dir != 'path_to_data_root_folder', 'Please remember to update the variable "data_root_dir"'
 
 audio_filepaths = OrderedDict([
   # ('DSWP-KASHMIR_MIXPRE6-1', os.path.join(data_dir_root, 'DSWP-KASHMIR_MIXPRE6-1', 'CETI23-279.1688830800000.WAV')),
-  ('DSWP-KASHMIR_MIXPRE6-1', os.path.join(data_dir_root, 'DSWP-KASHMIR_MIXPRE6-1', 'CETI23-280.1688831582000.WAV')),
-  ('Misc/Pagani', os.path.join(data_dir_root, 'Misc', 'Pagani.IMG_6821.1688831614043.mp4')),
-  ('Misc/Baumgartner', os.path.join(data_dir_root, 'Misc', 'Baumgartner.1688831238560.mov')),
-  ('Misc/Aluma', os.path.join(data_dir_root, 'Misc', 'Aluma.IMG_4693.1688831667112.mov')),
-  ('JD-CANON_REBEL_T5I', os.path.join(data_dir_root, 'JD-CANON_REBEL_T5I', '20230708_115400_DelPreto_T5i_MVI_7972_epoch1688831300110.MOV')),
+  ('DSWP-KASHMIR_MIXPRE6-1', os.path.join(data_root_dir, 'DSWP-KASHMIR_MIXPRE6-1', 'CETI23-280.1688831582000.WAV')),
+  ('Misc/Pagani', os.path.join(data_root_dir, 'Misc', 'Pagani.IMG_6821.1688831614043.mp4')),
+  ('Misc/Baumgartner', os.path.join(data_root_dir, 'Misc', 'Baumgartner.1688831238560.mov')),
+  ('Misc/Aluma', os.path.join(data_root_dir, 'Misc', 'Aluma.IMG_4693.1688831667112.mov')),
+  ('JD-CANON_REBEL_T5I', os.path.join(data_root_dir, 'JD-CANON_REBEL_T5I', '20230708_115400_DelPreto_T5i_MVI_7972_epoch1688831300110.MOV')),
   # ('Misc/DelPreto', os.path.join(data_dir_root, 'Misc', '20230708_154207_2023-07-08_10-56-52 recording epoch1688845327000.m4a')),
 ])
 hydrophone_index = 0

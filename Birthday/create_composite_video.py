@@ -77,7 +77,8 @@ from helpers_various import *
 
 # Specify the root data directory, which contains subfolders for each device.
 # The output video will also be saved in this folder.
-data_dir_root = 'path_to_aws_data'
+data_root_dir = 'path_to_data_root_folder'
+assert data_root_dir != 'path_to_data_root_folder', 'Please remember to update the variable "data_root_dir"'
 
 # Specify the subplot layout of device streams in the output video.
 # Each value is (row, column, rowspan, colspan).
@@ -96,8 +97,8 @@ composite_layout = OrderedDict([
   ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
   ('Codas Haifa (ICI)'    , (5, 0, 1, 4)),
-  ('Codas Haifa (TFS)'    , (6, 0, 1, 4)),
-  # ('Codas Biology (ICI)'  , (5, 0, 1, 4)),
+  # ('Codas Haifa (TFS)'    , (5, 0, 1, 4)),
+  ('Codas Biology (ICI)'  , (6, 0, 1, 4)),
   # ('Codas Biology (TFS)'  , (6, 0, 1, 4)),
 ])
 
@@ -340,9 +341,9 @@ codas_str = '-'.join(filter(None,
                             ]))
 if len(codas_str) > 0:
   codas_str = '_codas-%s' % codas_str
-output_video_filepath = os.path.join(data_dir_root,
+output_video_filepath = os.path.join(data_root_dir,
                                      'composite_video_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
-                                     % (output_video_fps, output_video_duration_s,
+                                     %(output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
                                         composite_layout_column_width,
                                         audio_resample_rate_hz, audio_plot_type,
@@ -487,7 +488,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   
   # Extract the timestamped data for this device.
   media_info = get_timestamped_data_audioVideoImage(
-                data_dir_root, [device_id], device_friendlyNames=[device_friendlyName],
+                data_root_dir, [device_id], device_friendlyNames=[device_friendlyName],
                 audio_type=audio_plot_type, audio_resample_rate_hz=audio_resample_rate_hz,
                 audio_spectrogram_target_window_s=audio_spectrogram_target_window_s,
                 video_target_width=subplot_width, video_target_height=subplot_height,
@@ -547,7 +548,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   
   # Extract the timestamped data for this device.
   drone_data = get_timestamped_data_drones(
-                  data_dir_root, [device_id], [device_friendlyName],
+                  data_root_dir, [device_id], [device_friendlyName],
                   end_time_cutoff_s=(output_video_start_time_s+output_video_duration_s),
                   suppress_printing=False)
   
@@ -576,7 +577,7 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   
   # Extract the timestamped data for this device.
   (coda_data, coda_files_start_times_s, coda_files_end_times_s) = \
-    get_timestamped_data_codas(data_dir_root,
+    get_timestamped_data_codas(data_root_dir,
                                device_ids=[device_id], device_friendlyNames=[device_friendlyName],
                                suppress_printing=False)
   

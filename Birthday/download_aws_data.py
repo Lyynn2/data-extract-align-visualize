@@ -188,7 +188,9 @@ def download_file_from_s3(s3_client, bucket_name, key, local_path):
 source_path = 'raw/2023-07-08'
 
 # provide the local path or a new foldername to create in the current working directory
-dest_path = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data/downloaded'
+dest_path = 'path_to_data_root_folder'
+assert dest_path != 'path_to_data_root_folder', 'Please remember to update the variable "data_root_dir"'
+
 download_files_from_folder(s3_client, bucket_name, source_path, dest_path,
                            extensions_to_include=None, # None to not filter, or a list of extensions
                            extensions_to_exclude=['mp4']) # None to not filter, or a list of extensions

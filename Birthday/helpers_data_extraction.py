@@ -148,7 +148,7 @@ def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s
     coda_start_time_s = audio_file_start_time_s + float(coda_row[tfs_columnIndex])
     click_icis_s_forCoda = [float(ici) for ici in itemgetter(*ici_columnIndexes)(coda_row)]
     click_icis_s_forCoda = [ici for ici in click_icis_s_forCoda if ici > 0]
-    click_times_s_forCoda = coda_start_time_s + np.cumsum([0.0] + click_icis_s_forCoda)
+    click_times_s_forCoda = list(coda_start_time_s + np.cumsum([0.0] + click_icis_s_forCoda))
     # Get the whale index number.
     whale_index = int(coda_row[whale_columnIndex])
     # Store the information in each field array.
@@ -427,17 +427,18 @@ def get_timestamped_data_drones(data_root_dir, device_ids, device_friendlyNames=
 
 # Get coda annotations and associated timestamps.
 # Will create a dictionary combining data from all coda annotations.
-#   All lists are the same length, with each entry describing the coda at that index.
 #   The dictionary keys are as follows:
 #     coda_start_times_s: each entry is a coda start time
 #     coda_end_times_s  : each entry is a coda end time
-#     click_icis_s  : each entry is a list of ICIs for that coda
-#     click_times_s  : each entry is a list of click times for clicks in that coda
-#     click_times_s  : each entry is a whale index; indexes over 20 indicate uncertain annotations (see Shane's readme for more information)
+#     click_icis_s      : each entry is a list of ICIs for that coda
+#     click_times_s     : each entry is a list of click times for clicks in that coda
+#     whale_indexes     : each entry is a whale index; indexes over 20 indicate uncertain annotations (see Shane's readme for more information)
+#   All lists are the same length, with each entry describing the coda at that index.
+# Timestamps are aligned using a manually determined offset for the underlying audio device.
 # @param data_root_dir The path to the root of the data directory,
 #   which contains subfolders for each requested device.
 # @param device_ids A list of device IDs for which to extract data.
-#   Should be 'coda_annotations_biology' or 'coda_annotations_haifa'
+#   Should be '_coda_annotations_biology' or '_coda_annotations_haifa'
 #   If None, will include both annotation sources.
 # @param device_friendlyName If provided, will print this name instead of the device ID.
 def get_timestamped_data_codas(data_root_dir, device_ids=None, device_friendlyNames=None,
@@ -452,7 +453,7 @@ def get_timestamped_data_codas(data_root_dir, device_ids=None, device_friendlyNa
   codas_files_start_times_s = dict([(source, []) for source in ['biology', 'haifa']])
   codas_files_end_times_s = dict([(source, []) for source in ['biology', 'haifa']])
   if device_ids is None:
-    device_ids = ['coda_annotations_biology', 'coda_annotations_haifa']
+    device_ids = ['_coda_annotations_biology', '_coda_annotations_haifa']
   
   for (device_index, device_id) in enumerate(device_ids):
     # Find data files for this device.

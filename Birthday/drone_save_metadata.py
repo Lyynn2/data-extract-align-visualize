@@ -38,6 +38,7 @@ import os
 # The path to the root of the data directory,
 #   which contains subfolders for each requested device.
 data_root_dir = 'path_to_data_root_folder'
+assert data_root_dir != 'path_to_data_root_folder', 'Please remember to update the variable "data_root_dir"'
 
 # A start and end time if desired.
 # If specified, will ignore wav files outside this range.

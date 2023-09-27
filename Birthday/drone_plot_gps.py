@@ -50,6 +50,7 @@ drone_metadata_filepaths = OrderedDict([
   ('DSWP-DJI_MAVIC3-2', os.path.join(data_root_dir, 'DSWP-DJI_MAVIC3-2', 'DSWP-DJI_MAVIC3-2_metadata.hdf5')),
   ('CETI-DJI_MAVIC3-1', os.path.join(data_root_dir, 'CETI-DJI_MAVIC3-1', 'CETI-DJI_MAVIC3-1_metadata.hdf5')),
   ])
+assert data_root_dir != 'path_to_data_root_folder', 'Please remember to update the variable "data_root_dir"'
 
 # Configure the ouptut video.
 output_video_playback_duration_s = 30 # The duration of the video file.
