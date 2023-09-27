@@ -34,7 +34,7 @@ from helpers_data_extraction import *
 
 # The path to the root of the data directory,
 #   which contains subfolders for each requested device.
-data_root_dir = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
+data_root_dir = 'path_to_data_root_folder'
 
 # A start and end time if desired.
 # If specified, will ignore wav files outside this range.
@@ -50,7 +50,7 @@ audio_resample_rate_hz = 96000
 
 # The target window size if requesting a spectrogram.
 # Note that the achieved window may be a bit different.
-#  The achieved window size can be computed as the difference between times in the returned spectrogram_t vector.
+#  The achieved window size will be computed as the difference between times in the returned spectrogram_t vector.
 audio_spectrogram_target_window_s = 0.03
 audio_spectrogram_window_s = None # will be set to the achieved window size
 # The desired frequency range if requesting a spectrogram.
@@ -65,8 +65,8 @@ device_ids = ['DSWP-KASHMIR_MIXPRE6-1']
 
 # Will create a dictionary with the following structure:
 #   [device_id][wav_filepath] = (timestamps_s, data) where
-#     timestamps_s is a numpy array of epoch timestamps for every sample
-#     If requesting waveforms, data is an [num_samples x num_channels] matrix of audio data
+#     timestamps_s is a numpy array of aligned epoch timestamps for every sample
+#     If requesting waveforms, data is a [num_samples x num_channels] matrix of audio data
 #     If requesting spectrograms, data is a tuple with (spectrogram, spectrogram_t, spectrogram_f).
 audio_datas = OrderedDict()
 
@@ -74,18 +74,18 @@ print()
 print('Getting timestamps and data for every audio sample')
 for device_id in device_ids:
   # Extract the timestamped data for this device.
-  media_info = get_timestamped_data_audioVideoImage(
-                data_root_dir, [device_id], device_friendlyNames=None,
-                audio_type=audio_data_type, audio_resample_rate_hz=audio_resample_rate_hz,
-                audio_spectrogram_target_window_s=audio_spectrogram_target_window_s,
-                start_time_cutoff_s=start_time_cutoff_s, end_time_cutoff_s=end_time_cutoff_s,
-                suppress_printing=False)
+  audio_data = get_timestamped_data_audioVideoImage(
+                 data_root_dir, [device_id], device_friendlyNames=None,
+                 audio_type=audio_data_type, audio_resample_rate_hz=audio_resample_rate_hz,
+                 audio_spectrogram_target_window_s=audio_spectrogram_target_window_s,
+                 start_time_cutoff_s=start_time_cutoff_s, end_time_cutoff_s=end_time_cutoff_s,
+                 suppress_printing=False)
     
   # Perform any additional processing on the data if desired,
   #  then store it in the appropriate dictionary.
-  if device_id in media_info:
+  if device_id in audio_data:
     audio_datas[device_id] = {}
-    for (filepath, (timestamps_s, data)) in media_info[device_id].items():
+    for (filepath, (timestamps_s, data)) in audio_data[device_id].items():
       if audio_data_type == 'spectrogram':
         # Get the computed spectrogram of the entire file.
         (spectrogram, spectrogram_t, spectrogram_f) = data
@@ -115,8 +115,9 @@ for device_id in audio_datas:
   print('See device id: %s' % device_id)
   for (filepath, (timestamps_s, data)) in audio_datas[device_id].items():
     print('  See data for file   : %s' % filepath)
-    print('    Start time of file: %0.3f s | %s' % (timestamps_s[0], time_s_to_str(timestamps_s[0], localtime_offset_s, localtime_offset_str)))
-    print('    End time of file  : %0.3f s | %s' % (timestamps_s[-1], time_s_to_str(timestamps_s[-1], localtime_offset_s, localtime_offset_str)))
+    print('    Adjusted start time of file      : %0.3f s | %s' % (timestamps_s[0], time_s_to_str(timestamps_s[0], localtime_offset_s, localtime_offset_str)))
+    print('    Adjusted end time of file        : %0.3f s | %s' % (timestamps_s[-1], time_s_to_str(timestamps_s[-1], localtime_offset_s, localtime_offset_str)))
+    print('    Manual offset added for alignment: %0.5f s' % (timestamps_s[0] - get_time_s_from_filename(filepath)))
     if audio_data_type == 'waveform':
       print('    Number of samples : %d' % (len(timestamps_s)))
       print('    Number of channels: %d' % (data.shape[1]))

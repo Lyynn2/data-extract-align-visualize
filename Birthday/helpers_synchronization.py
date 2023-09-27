@@ -47,9 +47,9 @@ drone_srt_timestamps_are_local_time = {
 #  A single number, which will be added to all timestamps for that device.
 #  An ordered dictionary where each entry is (started-before-this-device-time, offset).
 #   A started-before-this-device-time of -1 indicates timestamps after the previous cutoff.
-#   For example, if the dictionary is [(5, 100), (8, 101), (-1, 102)] then device timestamps
-#    within [0, 5] will have 100s added to them, timestamps within (5, 8] will
-#    have 101 seconds added to them, and timestamps > 8 will have 102s added to them.
+#   For example, if the dictionary is [(5, 100), (8, 101), (-1, 102)] then device files
+#    that start within [0, 5] will have 100s added to them, within (5, 8] will
+#    have 101 seconds added to them, and > 8 will have 102s added to them.
 epoch_offsets_toAdd_s = {
   'CETI-DJI_MAVIC3-1'          : OrderedDict([(1688829599.0, 0.79859),
                                               (1688833020.0, 0.79859),
@@ -82,6 +82,8 @@ epoch_offsets_toAdd_s = {
 
 # Add the desired epoch offset for a given device at a given start time.
 def adjust_start_time_s(media_start_time_s, device_id):
+  # If the offset for this device is a dictionary,
+  #  find the time interval that includes the current file start time.
   if isinstance(epoch_offsets_toAdd_s[device_id], dict):
     cutoff_times = list(epoch_offsets_toAdd_s[device_id].keys())
     epoch_offsets_toAdd_s_forDevice = list(epoch_offsets_toAdd_s[device_id].values())
@@ -90,6 +92,7 @@ def adjust_start_time_s(media_start_time_s, device_id):
     cutoff_index = np.searchsorted(cutoff_times, media_start_time_s)
     return media_start_time_s + epoch_offsets_toAdd_s_forDevice[cutoff_index]
   else:
+    # Otherwise, simply add the specified offset for this device.
     return media_start_time_s + epoch_offsets_toAdd_s[device_id]
   
 # Find a timestamp from a device that most closely matches a target timestamp.

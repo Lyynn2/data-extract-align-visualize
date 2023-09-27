@@ -69,31 +69,46 @@ def time_str_to_time_s(time_str):
 # DISTANCE
 ############################################
 
-# Convert a GPS position to x/y meters from a reference location.
+# Convert a GPS position to x/y distances from a reference location.
 # longitude_deg and latitude_deg may be numpy arrays to convert multiple locations.
 # The default reference location is the Mango House in Dominica.
-# Returns (x_m, y_m) where x_m is longitude distance and y_m is latitude distance.
-def gps_to_m(longitude_deg, latitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914)):
-  return (longitude_to_m(longitude_deg, reference_location_lonLat_deg=reference_location_lonLat_deg),
-          latitude_to_m(latitude_deg, reference_location_lonLat_deg=reference_location_lonLat_deg))
+# The default units for returned distances are meters.
+# Returns (x, y) where x is longitude distance and y is latitude distance.
+def gps_to_distance(longitude_deg, latitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914), units='m'):
+  return (longitude_to_distance(longitude_deg, reference_location_lonLat_deg=reference_location_lonLat_deg, units=units),
+          latitude_to_distance(latitude_deg, reference_location_lonLat_deg=reference_location_lonLat_deg, units=units))
 
 # Convert a GPS longitude to meters from a reference location.
 # longitude_deg may be a list or numpy array to convert multiple values.
 # The default reference location is the Mango House in Dominica.
-def longitude_to_m(longitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914)):
+# The default units for returned distances are meters.
+def longitude_to_distance(longitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914), units='m'):
   if isinstance(longitude_deg, (list, tuple)):
     longitude_deg = np.array(longitude_deg)
   conversion_factor_lon_to_km = (40075 * np.cos(np.radians(reference_location_lonLat_deg[1])) / 360) # From simplified Haversine formula: https://stackoverflow.com/a/39540339
-  return (longitude_deg - reference_location_lonLat_deg[0])*conversion_factor_lon_to_km*1000.0
+  if units.lower() in ['km', 'kilometer', 'kilometers']:
+    conversion_factor = conversion_factor_lon_to_km
+  elif units.lower() in ['m', 'meter', 'meters']:
+    conversion_factor = conversion_factor_lon_to_km*1000.0
+  else:
+    raise ValueError('Unknown units [%s]' % units)
+  return (longitude_deg - reference_location_lonLat_deg[0])*conversion_factor
 
 # Convert a GPS latitude to meters from a reference location.
 # latitude_deg may be a list or numpy array to convert multiple values.
 # The default reference location is the Mango House in Dominica.
-def latitude_to_m(latitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914)):
+# The default units for returned distances are meters.
+def latitude_to_distance(latitude_deg, reference_location_lonLat_deg=(-61.373179, 15.306914), units='m'):
   if isinstance(latitude_deg, (list, tuple)):
     latitude_deg = np.array(latitude_deg)
   conversion_factor_lat_to_km = (111.32) # From simplified Haversine formula: https://stackoverflow.com/a/39540339
-  return (latitude_deg - reference_location_lonLat_deg[1])*conversion_factor_lat_to_km*1000.0
+  if units.lower() in ['km', 'kilometer', 'kilometers']:
+    conversion_factor = conversion_factor_lat_to_km
+  elif units.lower() in ['m', 'meter', 'meters']:
+    conversion_factor = conversion_factor_lat_to_km*1000.0
+  else:
+    raise ValueError('Unknown units [%s]' % units)
+  return (latitude_deg - reference_location_lonLat_deg[1])*conversion_factor
 
 ############################################
 # FILES AND TYPES

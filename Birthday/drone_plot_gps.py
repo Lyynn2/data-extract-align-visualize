@@ -44,7 +44,7 @@ from helpers_various import *
 ##############################################################
 
 # Specify the filepath for each drone's HDF5 file of metadata.
-data_root_dir = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
+data_root_dir = 'path_to_data_root_folder'
 drone_metadata_filepaths = OrderedDict([
   # Map from device ID to its HDF5 filepath.
   ('DSWP-DJI_MAVIC3-2', os.path.join(data_root_dir, 'DSWP-DJI_MAVIC3-2', 'DSWP-DJI_MAVIC3-2_metadata.hdf5')),
@@ -112,18 +112,10 @@ for (device_id, drone_metadata_filepath) in drone_metadata_filepaths.items():
     # Load data about the drone's position.
     latitudes            = np.array(h5file[video_filename]['position']['latitude'])
     longitudes           = np.array(h5file[video_filename]['position']['longitude'])
-    altitudes_absolute_m = np.array(h5file[video_filename]['position']['altitude_absolute_m'])
-    altitudes_relative_m = np.array(h5file[video_filename]['position']['altitude_relative_m'])
-    
-    # Load data about the drone's speed that was estimated from the GPS positions.
-    speed_m_s = np.array(h5file[video_filename]['speed']['estimated_speed_fromGPS_m_s'])
-    is_stationary = np.array(h5file[video_filename]['speed']['estimated_isStationary_fromGPS'])
     
     # Note that there is 1 frame where the latitude was 0;
     #  presumably this is used to indicate a sensor error.
     # Mark any such frames as NaN for clarity.
-    speed_m_s[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
-    is_stationary[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
     latitudes[np.where(latitudes == 0)[0]] = np.nan
     longitudes[np.where(longitudes == 0)[0]] = np.nan
     
@@ -215,8 +207,9 @@ for (frame_index, output_video_timestamp_s) in enumerate(output_video_timestamps
       current_position_handles[device_id] = ax.scatter(x,y, marker='.', color=[drone_plot_colors_currentPosition[device_id]], s=marker_size_currentPosition)
     else:
       current_position_handles[device_id].set_offsets(np.c_[x, y])
-    # Connect the current position to the previous position if there was one
-    #  (do not connect disjoint positions across files).
+    # Connect the current position to the previous position.
+    # Use a dotted line if it jumped files (if the drone restarted),
+    #  and solid lines within files.
     if index is not None:
       if previous_position_xy[device_id] is not None:
         ax.plot([previous_position_xy[device_id][0], x], [previous_position_xy[device_id][1], y],

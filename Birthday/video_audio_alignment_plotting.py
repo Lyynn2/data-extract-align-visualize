@@ -54,7 +54,7 @@ from helpers_various import *
 ######################################################
 
 # Specify the root data directory, which contains subfolders for each device
-data_dir_root = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
+data_dir_root = 'path_to_data_root_folder'
 
 audio_filepaths = OrderedDict([
   # ('DSWP-KASHMIR_MIXPRE6-1', os.path.join(data_dir_root, 'DSWP-KASHMIR_MIXPRE6-1', 'CETI23-279.1688830800000.WAV')),

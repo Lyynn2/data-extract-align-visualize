@@ -37,7 +37,7 @@ import os
 
 # The path to the root of the data directory,
 #   which contains subfolders for each requested device.
-data_root_dir = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
+data_root_dir = 'path_to_data_root_folder'
 
 # A start and end time if desired.
 # If specified, will ignore wav files outside this range.
@@ -79,19 +79,27 @@ for device_id in device_ids:
   if device_id in drone_data:
     drone_datas[device_id] = {}
     for (filepath, (timestamps_s, data)) in drone_data[device_id].items():
-      # Estimate the speed.
-      (x_m, y_m) = gps_to_m(data['longitude'], data['latitude'])
+      # Estimate the horizontal and vertical speeds.
+      (x_m, y_m) = gps_to_distance(data['longitude'], data['latitude'], units='m')
+      z_m = data['altitude_relative_m']
       (_, x_m) = moving_average(timestamps_s, x_m, speed_moving_average_window_duration_s, 'centered')
       (_, y_m) = moving_average(timestamps_s, y_m, speed_moving_average_window_duration_s, 'centered')
+      (_, z_m) = moving_average(timestamps_s, z_m, speed_moving_average_window_duration_s, 'centered')
       dx_m = np.diff(x_m)
       dy_m = np.diff(y_m)
+      dz_m = np.diff(z_m)
       dt_s = np.diff(timestamps_s)
-      speed_m_s = np.sqrt(np.square(dx_m) + np.square(dy_m)) / dt_s
-      speed_m_s = np.insert(speed_m_s, 0, speed_m_s[0])
-      is_stationary = speed_m_s <= stationary_speed_threshold_m_s
-      data['estimated_speed_fromGPS_m_s'] = speed_m_s
-      data['estimated_isStationary_fromGPS'] = is_stationary
+      speed_horizontal_m_s = np.sqrt(np.square(dx_m) + np.square(dy_m))/dt_s
+      speed_horizontal_m_s = np.insert(speed_horizontal_m_s, 0, speed_horizontal_m_s[0])
+      is_stationary_horizontal = speed_horizontal_m_s <= stationary_speed_threshold_m_s
+      speed_vertical_m_s = np.sqrt(np.square(dz_m))/dt_s
+      speed_vertical_m_s = np.insert(speed_vertical_m_s, 0, speed_vertical_m_s[0])
+      is_stationary_vertical = speed_vertical_m_s <= stationary_speed_threshold_m_s
       # Store the data in the main dictionary.
+      data['estimated_isStationary_horizontal_fromGPS'] = is_stationary_horizontal
+      data['estimated_isStationary_vertical_fromAltitude'] = is_stationary_vertical
+      data['estimated_speed_horizontal_fromGPS_m_s'] = speed_horizontal_m_s
+      data['estimated_speed_vertical_fromAltitude_m_s'] = speed_vertical_m_s
       drone_datas[device_id][filepath] = (timestamps_s, data)
   
 ############################################
@@ -134,7 +142,8 @@ for device_id in drone_datas:
       elif key in ['latitude', 'longitude',
                    'altitude_absolute_m', 'altitude_relative_m']:
         position_group.create_dataset(key, data=data[key])
-      elif key in ['estimated_speed_fromGPS_m_s', 'estimated_isStationary_fromGPS']:
+      elif key in ['estimated_speed_horizontal_fromGPS_m_s', 'estimated_isStationary_horizontal_fromGPS',
+                   'estimated_speed_vertical_fromAltitude_m_s', 'estimated_isStationary_vertical_fromAltitude']:
         speed_group.create_dataset(key, data=data[key])
       elif key in ['color_mode', 'color_temperature',
                    'exposure_value', 'f_number',

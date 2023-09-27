@@ -306,13 +306,13 @@ class ImagePlot:
     self.set_x_ticks_major(major_tick_values)
     self.set_x_ticks_minor(minor_tick_values)
   def set_x_ticks_major(self, tick_values):
-    self._xticks['major'] = tick_values
+    self._xticks['major'] = sorted(tick_values)
     if tick_values is not None:
       self._x_tick_spacing['major'] = None # use manual ticks instead of auto
     if self._auto_update_empty_plot:
       self.render_empty()
   def set_x_ticks_minor(self, tick_values):
-    self._xticks['minor'] = tick_values
+    self._xticks['minor'] = sorted(tick_values)
     if tick_values is not None:
       self._x_tick_spacing['minor'] = None # use manual ticks instead of auto
     if self._auto_update_empty_plot:
@@ -322,13 +322,13 @@ class ImagePlot:
     self.set_y_ticks_major(major_tick_values)
     self.set_y_ticks_minor(minor_tick_values)
   def set_y_ticks_major(self, tick_values):
-    self._yticks['major'] = tick_values
+    self._yticks['major'] = sorted(tick_values)
     if tick_values is not None:
       self._y_tick_spacing['major'] = None # use manual ticks instead of auto
     if self._auto_update_empty_plot:
       self.render_empty()
   def set_y_ticks_minor(self, tick_values):
-    self._yticks['minor'] = tick_values
+    self._yticks['minor'] = sorted(tick_values)
     if tick_values is not None:
       self._y_tick_spacing['minor'] = None # use manual ticks instead of auto
     if self._auto_update_empty_plot:
@@ -340,6 +340,7 @@ class ImagePlot:
       if self._x_tick_spacing[tick_type] is not None:
         first_tick = next_multiple(self._xlim[0], self._x_tick_spacing[tick_type])
         last_tick = previous_multiple(self._xlim[1], self._x_tick_spacing[tick_type])
+        (first_tick, last_tick) = sorted([first_tick, last_tick])
         self._xticks[tick_type] = np.arange(start=first_tick, stop=last_tick+self._x_tick_spacing[tick_type]/2, # add to the stop to be inclusive of last_tick
                                             step=self._x_tick_spacing[tick_type])
         # Ensure that the specified value to include is a tick.
@@ -348,6 +349,7 @@ class ImagePlot:
       if self._y_tick_spacing[tick_type] is not None:
         first_tick = next_multiple(self._ylim[0], self._y_tick_spacing[tick_type])
         last_tick = previous_multiple(self._ylim[1], self._y_tick_spacing[tick_type])
+        (first_tick, last_tick) = sorted([first_tick, last_tick])
         self._yticks[tick_type] = np.arange(start=first_tick, stop=last_tick+self._y_tick_spacing[tick_type]/2, # add to the stop to be inclusive of last_tick
                                             step=self._y_tick_spacing[tick_type])
         # Ensure that the specified value to include is a tick.

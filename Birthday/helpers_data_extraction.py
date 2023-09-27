@@ -98,6 +98,7 @@ def get_drone_srt_data(video_filepath):
 ############################################
 
 # Parse coda annotations from a CSV file.
+# Will adjust timestamps to synchronize devices.
 def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s_fn):
   # Read the CSV data.
   annotations_file = open(annotation_filepath, 'r')
@@ -136,10 +137,9 @@ def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s
       audio_filepath = filepaths[0]
       # Get the device ID as the name of its parent folder.
       device_id = os.path.split(os.path.dirname(audio_filepath))[-1]
-      # Get the start time of the file from its filename and the specified offset for this device.
-      filename = os.path.basename(audio_filepath)
-      start_time_ms = int(re.search('\d{13}', filename)[0])
-      start_time_s = start_time_ms/1000.0
+      # Get the start time of the file from its filename,
+      #  and add the specified offset for this device to synchronize devices.
+      start_time_s = get_time_s_from_filename(audio_filepath)
       start_time_s = adjust_start_time_s_fn(start_time_s, device_id)
       # Store the result to reduce overhead next coda row.
       audio_file_start_times_s[audio_file_keyword] = start_time_s
@@ -170,6 +170,15 @@ def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s
 # MAIN DATA/TIMESTAMP EXTRACTION
 ############################################
 
+# Get the start time of a file from its filename.
+# This timestamp will not be aligned to synchronize with other devices.
+def get_time_s_from_filename(filepath):
+  filename = os.path.basename(filepath)
+  start_time_ms = int(re.search('\d{13}', filename)[0])
+  start_time_s = start_time_ms/1000.0
+  return start_time_s
+  
+# Get video, audio, or image data with associated aligned timestamps.
 # Will create a dictionary with following structure:
 #   [device_id][filepath] = (timestamps_s, data)
 #   If filepath points to a video:
@@ -177,7 +186,7 @@ def get_coda_annotations(annotation_filepath, data_root_dir, adjust_start_time_s
 #     data is a video reader object
 #   If filepath points to a wav file:
 #     timestamps_s is a numpy array of epoch timestamps for every sample
-#     if requesting waveforms, data is an [num_samples x num_channels] matrix of audio data
+#     if requesting waveforms, data is a [num_samples x num_channels] matrix of audio data
 #     if requesting spectrograms, data is a tuple with (spectrogram, spectrogram_t, spectrogram_f).
 #   If filepath points to an image:
 #     timestamps_s is a single-element numpy array with the epoch timestamps of the image
@@ -222,27 +231,25 @@ def get_timestamped_data_audioVideoImage(data_root_dir, device_ids, device_frien
     if end_time_cutoff_s is not None and 'coda_annotations' not in device_id:
       for (file_index, filepath) in enumerate(filepaths):
         # Get the start time in epoch time
-        filename = os.path.basename(filepath)
-        start_time_ms = int(re.search('\d{13}', filename)[0])
-        start_time_s = start_time_ms/1000.0
+        start_time_s = get_time_s_from_filename(filepath)
         start_time_s = adjust_start_time_s(start_time_s, device_id)
         if start_time_s <= end_time_cutoff_s:
           filepaths_toKeep.append(filepath)
     else:
       filepaths_toKeep = filepaths
-    print('Extracting from %4d files for device [%s] (ignored %d files starting after the end time)' % (len(filepaths_toKeep),
-                                                                                                       device_friendlyNames[device_index] if device_friendlyNames is not None else device_id,
-                                                                                                       len(filepaths) - len(filepaths_toKeep)))
+    print('Extracting from %4d files for device [%s] (ignored %d files starting after the end time)'
+          % (len(filepaths_toKeep),
+             device_friendlyNames[device_index] if device_friendlyNames is not None else device_id,
+             len(filepaths) - len(filepaths_toKeep)))
     filepaths = filepaths_toKeep
   
     # Loop through each file to extract its timestamps and data pointers.
     media_infos[device_id] = {}
     for (file_index, filepath) in enumerate(filepaths):
       # Get the start time in epoch time from the filename.
-      filename = os.path.basename(filepath)
+      # Will add manual offsets to synchronize devices.
       if 'coda_annotations' not in device_id:
-        start_time_ms = int(re.search('\d{13}', filename)[0])
-        start_time_s = start_time_ms/1000.0
+        start_time_s = get_time_s_from_filename(filepath)
         start_time_s = adjust_start_time_s(start_time_s, device_id)
       else:
         start_time_s = None
@@ -338,11 +345,12 @@ def get_timestamped_data_audioVideoImage(data_root_dir, device_ids, device_frien
   
   # Return the completed dictionary of timestamps and data.
   return media_infos
-  
+
+# Get drone metadata with associated timestamps, including GPS and camera settings.
 # Will create a dictionary with following structure:
 #   [device_id][filepath] = (timestamps_s, data) where
 #    timestamps_s is a numpy array of epoch timestamps for every frame and
-#    data is a dictionary returned by helpers.get_drone_srt_data()
+#    data is a dictionary returned by get_drone_srt_data()
 # @param data_root_dir The path to the root of the data directory,
 #   which contains subfolders for each requested device.
 # @param device_ids A list of device IDs for which to extract data.
@@ -375,18 +383,18 @@ def get_timestamped_data_drones(data_root_dir, device_ids, device_friendlyNames=
     filepaths_toKeep = []
     if end_time_cutoff_s is not None and 'coda_annotations' not in device_id:
       for (file_index, filepath) in enumerate(filepaths):
-        # Get the start time in epoch time
-        filename = os.path.basename(filepath)
-        start_time_ms = int(re.search('\d{13}', filename)[0])
-        start_time_s = start_time_ms/1000.0
+        # Get the start time in epoch time.
+        # Will add manual offsets to synchronize devices.
+        start_time_s = get_time_s_from_filename(filepath)
         start_time_s = adjust_start_time_s(start_time_s, device_id)
         if start_time_s <= end_time_cutoff_s:
           filepaths_toKeep.append(filepath)
     else:
       filepaths_toKeep = filepaths
-    print('Extracting from %4d files for device [%s] (ignored %d files starting after the end time)' % (len(filepaths_toKeep),
-                                                                                                       device_friendlyNames[device_index] if device_friendlyNames is not None else device_id,
-                                                                                                       len(filepaths) - len(filepaths_toKeep)))
+    print('Extracting from %4d files for device [%s] (ignored %d files starting after the end time)'
+          % (len(filepaths_toKeep),
+             device_friendlyNames[device_index] if device_friendlyNames is not None else device_id,
+             len(filepaths) - len(filepaths_toKeep)))
     filepaths = filepaths_toKeep
   
     # Loop through each file to extract its timestamps and data pointers.
@@ -417,6 +425,7 @@ def get_timestamped_data_drones(data_root_dir, device_ids, device_friendlyNames=
   # Return the completed dictionary of timestamps and data.
   return drone_datas
 
+# Get coda annotations and associated timestamps.
 # Will create a dictionary combining data from all coda annotations.
 #   All lists are the same length, with each entry describing the coda at that index.
 #   The dictionary keys are as follows:
@@ -442,6 +451,8 @@ def get_timestamped_data_codas(data_root_dir, device_ids=None, device_friendlyNa
                                }) for source in ['biology', 'haifa']])
   codas_files_start_times_s = dict([(source, []) for source in ['biology', 'haifa']])
   codas_files_end_times_s = dict([(source, []) for source in ['biology', 'haifa']])
+  if device_ids is None:
+    device_ids = ['coda_annotations_biology', 'coda_annotations_haifa']
   
   for (device_index, device_id) in enumerate(device_ids):
     # Find data files for this device.
@@ -463,11 +474,8 @@ def get_timestamped_data_codas(data_root_dir, device_ids=None, device_friendlyNa
   
     # Loop through each file to extract its timestamps and data pointers.
     for (file_index, filepath) in enumerate(filepaths):
-      # Get the start time in epoch time from the filename.
-      filename = os.path.basename(filepath)
-      start_time_s = None
-      
       if is_coda_annotations(filepath):
+        # Get coda annotations and timestamps for this CSV file.
         (coda_start_times_s, coda_end_times_s, click_icis_s, click_times_s, whale_indexes,
          annotation_start_times_perAudioFile_s, annotation_end_times_perAudioFile_s) = \
           get_coda_annotations(filepath, data_root_dir, adjust_start_time_s)
@@ -489,12 +497,14 @@ def get_timestamped_data_codas(data_root_dir, device_ids=None, device_friendlyNa
   # Remove sources that were not requested or that had no data.
   sources_to_remove = []
   for (source, data) in codas_data.items():
-    if len(data['coda_start_times_s']) == 0:
+    if len(data['coda_start_times_s']) == 0 and len(codas_files_start_times_s[source]) == 0:
       sources_to_remove.append(source)
   if len(sources_to_remove) > 0:
     for source in sources_to_remove:
       del codas_data[source]
+      del codas_files_start_times_s[source]
+      del codas_files_end_times_s[source]
       
   # Return the completed set of coda annotations.
-  return codas_data
+  return (codas_data, codas_files_start_times_s, codas_files_end_times_s)
       

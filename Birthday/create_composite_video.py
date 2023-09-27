@@ -77,27 +77,27 @@ from helpers_various import *
 
 # Specify the root data directory, which contains subfolders for each device.
 # The output video will also be saved in this folder.
-data_dir_root = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
+data_dir_root = 'path_to_aws_data'
 
 # Specify the subplot layout of device streams in the output video.
 # Each value is (row, column, rowspan, colspan).
 composite_layout = OrderedDict([
-  # ('Mavic (CETI)'         , (0, 0, 2, 2)),
-  # ('Mavic (DSWP)'         , (0, 2, 2, 2)),
-  # ('Canon (Gruber)'       , (2, 0, 1, 1)),
-  # ('Canon (DelPreto)'     , (2, 1, 1, 1)),
-  # ('Phone (DelPreto)'     , (2, 1, 1, 1)),
-  # ('GoPro (DelPreto)'     , (2, 1, 1, 1)),
-  # ('Canon (DSWP)'         , (2, 2, 1, 1)),
-  # ('Drone Positions'      , (2, 3, 1, 1)),
-  # ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
-  # ('Phone (Pagani)'       , (3, 1, 1, 1)),
-  # ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
-  # ('Phone (Aluma)'        , (3, 3, 1, 1)),
+  ('Mavic (CETI)'         , (0, 0, 2, 2)),
+  ('Mavic (DSWP)'         , (0, 2, 2, 2)),
+  ('Canon (Gruber)'       , (2, 0, 1, 1)),
+  ('Canon (DelPreto)'     , (2, 1, 1, 1)),
+  ('Phone (DelPreto)'     , (2, 1, 1, 1)),
+  ('GoPro (DelPreto)'     , (2, 1, 1, 1)),
+  ('Canon (DSWP)'         , (2, 2, 1, 1)),
+  ('Drone Positions'      , (2, 3, 1, 1)),
+  ('Phone (Baumgartner)'  , (3, 0, 1, 1)),
+  ('Phone (Pagani)'       , (3, 1, 1, 1)),
+  ('Phone (Salino-Hugg)'  , (3, 2, 1, 1)),
+  ('Phone (Aluma)'        , (3, 3, 1, 1)),
   ('Hydrophone (Mevorach)', (4, 0, 1, 4)),
-  # ('Codas Haifa (ICI)'    , (5, 0, 1, 4)),
-  # ('Codas Haifa (TFS)'    , (5, 0, 1, 4)),
-  # ('Codas Biology (ICI)'  , (6, 0, 1, 4)),
+  ('Codas Haifa (ICI)'    , (5, 0, 1, 4)),
+  ('Codas Haifa (TFS)'    , (6, 0, 1, 4)),
+  # ('Codas Biology (ICI)'  , (5, 0, 1, 4)),
   # ('Codas Biology (TFS)'  , (6, 0, 1, 4)),
 ])
 
@@ -259,16 +259,12 @@ codas_plot_tfs_scaleFactor = 1
 audio_plots_left_axis_position_ratio = 0.05  # fraction of plot image width at which the leftmost edge of the axis will be plotted
 audio_plots_right_axis_position_ratio = 0.95 # fraction of plot image width at which the rightmost edge of the axis will be plotted
 audio_plot_horizontal_alignment = 0 # fraction of composite image width at which to place the leftmost edge of the image plot inside the subplot
-codas_plot_hide_xlabels = {'biology': {'ici': False, 'tfs': False},
-                           'haifa':   {'ici': False,  'tfs': False}}
-audio_plot_hide_xlabels = True
+codas_plot_hide_xlabels = {'biology': {'ici': True, 'tfs': True},
+                           'haifa':   {'ici': True, 'tfs': True}}
+audio_plot_hide_xlabels = False
 
 # Configure drone plotting.
 drone_plot_reference_location_lonLat = [-61.373179, 15.306914] # will plot meters from this location (the Mango house)
-conversion_factor_lat_to_km = (111.32) # From simplified Haversine formula: https://stackoverflow.com/a/39540339
-conversion_factor_lon_to_km = (40075 * np.cos(np.radians(drone_plot_reference_location_lonLat[1])) / 360) # From simplified Haversine formula: https://stackoverflow.com/a/39540339
-drone_lat_to_km = lambda lat:  (lat - drone_plot_reference_location_lonLat[1])*conversion_factor_lat_to_km
-drone_lon_to_km = lambda lon: -(lon - drone_plot_reference_location_lonLat[0])*conversion_factor_lon_to_km
 drone_plot_rangeRatio_bounds = [1, 3] # min/max ratio that the plot range can be, relative to the distance between the drones, before starting to zoom in/out
 drone_plot_minRange_km = 250/1000 # minimum range of x or y axis; but if drones are far from each other, range can dynamically expand
 drone_plot_rangePad_km = 75/1000  # minimum distance from a drone to the edge of the plot
@@ -336,17 +332,22 @@ output_video_banner_font = cv2.FONT_HERSHEY_SIMPLEX
 
 output_video_start_time_s = time_str_to_time_s(output_video_start_time_str)
 
+codas_str = '-'.join(filter(None,
+                            ['bioICI' if 'Codas Biology (ICI)' in composite_layout else '',
+                             'bioTFS' if 'Codas Biology (TFS)' in composite_layout else '',
+                             'haifaICI' if 'Codas Haifa (ICI)' in composite_layout else '',
+                             'haifaTFS' if 'Codas Haifa (TFS)' in composite_layout else '',
+                            ]))
+if len(codas_str) > 0:
+  codas_str = '_codas-%s' % codas_str
 output_video_filepath = os.path.join(data_dir_root,
-                                     'composite_video_TEST_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
+                                     'composite_video_fps%d_duration%d_start%d_colWidth%d_audio%d%s%s.mp4'
                                      % (output_video_fps, output_video_duration_s,
                                         1000*output_video_start_time_s,
                                         composite_layout_column_width,
                                         audio_resample_rate_hz, audio_plot_type,
-                                        ''.join(['_codasICI' if True in ['(ICI)' in x for x in list(composite_layout.keys())] else '',
-                                                 '_codasTFS' if True in ['(TFS)' in x for x in list(composite_layout.keys())] else '',
-                                                 '_codasBio' if True in ['Codas Biology' in x for x in list(composite_layout.keys())] else '',
-                                                 '_codasHaifa' if True in ['Codas Haifa' in x for x in list(composite_layout.keys())] else '',
-                                                 ])))
+                                        codas_str
+                                        ))
 
 
 ######################################################
@@ -574,14 +575,17 @@ for (device_friendlyName, layout_specs) in composite_layout.items():
   (subplot_width, subplot_height) = get_subplot_size(layout_specs)
   
   # Extract the timestamped data for this device.
-  coda_data = get_timestamped_data_codas(
-                data_dir_root, device_ids=[device_id], device_friendlyNames=[device_friendlyName],
-                suppress_printing=False)
+  (coda_data, coda_files_start_times_s, coda_files_end_times_s) = \
+    get_timestamped_data_codas(data_dir_root,
+                               device_ids=[device_id], device_friendlyNames=[device_friendlyName],
+                               suppress_printing=False)
   
   # Perform any additional processing on the data,
   #  then store it in the appropriate dictionary.
-  for (source, data) in coda_data.items():
-    codas_data[source] = data
+  for source in coda_data:
+    codas_data[source] = coda_data[source]
+    codas_files_start_times_s[source] = coda_files_start_times_s[source]
+    codas_files_end_times_s[source] = coda_files_end_times_s[source]
     
 print()
 
@@ -827,8 +831,8 @@ def update_drone_subplot(composite_img, layout_specs, data,
   drone_coordinates = []
   for (drone_index, drone_data) in enumerate(data):
     if drone_data is not None:
-      x = drone_lon_to_km(drone_data['longitude'])
-      y = drone_lat_to_km(drone_data['latitude'])
+      (x, y) = gps_to_distance(drone_data['longitude'], drone_data['latitude'], drone_plot_reference_location_lonLat,
+                               units='km')
       drone_coordinates.append([x, y])
   if len(drone_coordinates) > 0:
     drone_coordinates = np.array(drone_coordinates)
@@ -886,8 +890,8 @@ def update_drone_subplot(composite_img, layout_specs, data,
   # Plot the drones.
   for (drone_index, drone_data) in enumerate(data):
     if drone_data is not None:
-      x = drone_lon_to_km(drone_data['longitude'])
-      y = drone_lat_to_km(drone_data['latitude'])
+      (x, y) = gps_to_distance(drone_data['longitude'], drone_data['latitude'], drone_plot_reference_location_lonLat,
+                               units='km')
       drone_plot_color_index = drone_plot_color_lookup_keys.searchsorted(drone_data['altitude_relative_m'])
       drone_plot_color_index = min(drone_plot_color_index, drone_plot_color_lookup.shape[0]-1)
       drone_imagePlot.plot(x, y,
@@ -1088,8 +1092,8 @@ if len(drone_datas) > 0 and 'Drone Positions' in composite_layout:
   plt.set_font_color(drone_plot_label_color)
   # Set the plot bounds and ticks.
   (x_center, y_center) = drone_plot_reference_location_lonLat
-  x_center = drone_lon_to_km(x_center)/1000.0
-  y_center = drone_lat_to_km(y_center)/1000.0
+  (x, y) = gps_to_distance(x_center, y_center, drone_plot_reference_location_lonLat,
+                           units='km')
   x_limits = x_center + np.array([-drone_plot_minRange_km/2, drone_plot_minRange_km/2])
   y_limits = y_center + np.array([-drone_plot_minRange_km/2, drone_plot_minRange_km/2])
   plt.set_x_limits(x_limits)

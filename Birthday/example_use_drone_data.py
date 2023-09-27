@@ -30,16 +30,18 @@ import numpy as np
 import os
 from collections import OrderedDict
 
+from helpers_various import *
+
 ##############################################################
 # Configuration
 ##############################################################
 
 # Specify the filepath for each drone's HDF5 file of metadata.
-data_root_dir = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
+data_root_dir = '.'
 drone_metadata_filepaths = OrderedDict([
   # Map from device ID to its HDF5 filepath.
-  ('DSWP-DJI_MAVIC3-2', os.path.join(data_root_dir, 'DSWP-DJI_MAVIC3-2', 'DSWP-DJI_MAVIC3-2_metadata.hdf5')),
-  ('CETI-DJI_MAVIC3-1', os.path.join(data_root_dir, 'CETI-DJI_MAVIC3-1', 'CETI-DJI_MAVIC3-1_metadata.hdf5')),
+  ('DSWP-DJI_MAVIC3-2', os.path.join(data_root_dir, 'DSWP-DJI_MAVIC3-2_metadata.hdf5')),
+  ('CETI-DJI_MAVIC3-1', os.path.join(data_root_dir, 'CETI-DJI_MAVIC3-1_metadata.hdf5')),
   ])
 
 ############################################
@@ -67,18 +69,23 @@ for (device_id, drone_metadata_filepath) in drone_metadata_filepaths.items():
     # Load data about the drone's position.
     latitudes            = np.array(h5file[video_filename]['position']['latitude'])
     longitudes           = np.array(h5file[video_filename]['position']['longitude'])
-    altitudes_absolute_m = np.array(h5file[video_filename]['position']['altitude_absolute_m'])
     altitudes_relative_m = np.array(h5file[video_filename]['position']['altitude_relative_m'])
+    #altitudes_absolute_m = np.array(h5file[video_filename]['position']['altitude_absolute_m'])
     
     # Load data about the drone's speed that was estimated from the GPS positions.
-    speed_m_s = np.array(h5file[video_filename]['speed']['estimated_speed_fromGPS_m_s'])
-    is_stationary = np.array(h5file[video_filename]['speed']['estimated_isStationary_fromGPS'])
+    speed_horizontal_m_s = np.array(h5file[video_filename]['speed']['estimated_speed_horizontal_fromGPS_m_s'])
+    is_stationary_horizontal = np.array(h5file[video_filename]['speed']['estimated_isStationary_horizontal_fromGPS'])
+    # Load data about the drone's speed that was estimated from altitude measurements.
+    speed_vertical_m_s = np.array(h5file[video_filename]['speed']['estimated_speed_vertical_fromAltitude_m_s'])
+    is_stationary_vertical = np.array(h5file[video_filename]['speed']['estimated_isStationary_vertical_fromAltitude'])
     
     # Note that there is 1 frame where the latitude was 0;
     #  presumably this is used to indicate a sensor error.
     # Mark any such frames as NaN for clarity.
-    speed_m_s[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
-    is_stationary[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
+    speed_horizontal_m_s[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
+    is_stationary_horizontal[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
+    speed_vertical_m_s[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
+    is_stationary_vertical[np.where((latitudes == 0) | (longitudes == 0))[0]] = np.nan
     latitudes[np.where(latitudes == 0)[0]] = np.nan
     longitudes[np.where(longitudes == 0)[0]] = np.nan
     
@@ -92,42 +99,64 @@ for (device_id, drone_metadata_filepath) in drone_metadata_filepaths.items():
     shutters           = np.array(h5file[video_filename]['camera']['shutter'])
     
     # Print a summary.
-    print('    File %s: %4d frames | %5.2f FPS | manual alignment offset %8.6f seconds' % (
+    print('    File %s: %4d frames | %5.1f s | %5.2f FPS | manual alignment offset %8.6f s' % (
             video_filename, timestamps_s.shape[0],
+            (timestamps_s[-1] - timestamps_s[0]),
             (timestamps_s.shape[0]-1)/(timestamps_s[-1] - timestamps_s[0]),
              timestamps_s[0] - float(video_filename)/1000.0))
 
 print()
 
 ###########################################################################
-# Helper methods for converting between epoch time and human-readable time.
+# Re-estimate speed using a different window duration if desired.
 ###########################################################################
 
-import dateutil.parser
-from datetime import datetime
+speed_moving_average_window_duration_s = 2
+stationary_speed_threshold_m_s = 0.001
+
+for (device_id, drone_metadata_filepath) in drone_metadata_filepaths.items():
+  # Open the HDF5 file.
+  h5file = h5py.File(drone_metadata_filepath, 'r')
+  # The top-level keys of the file are the corresponding video filenames.
+  video_filenames = list(h5file.keys())
+  
+  for video_filename in video_filenames:
+    # Load the global timestamps for each frame of the video.
+    # Timestamps have been adjusted to be synchronized based on the current manual estimates.
+    timestamps_s   = np.array(h5file[video_filename]['time']['aligned_timestamp_s'])
+    timestamps_str = np.array(h5file[video_filename]['time']['aligned_timestamp_str'])
+    
+    # Load data about the drone's position.
+    latitudes            = np.array(h5file[video_filename]['position']['latitude'])
+    longitudes           = np.array(h5file[video_filename]['position']['longitude'])
+    altitudes_relative_m = np.array(h5file[video_filename]['position']['altitude_relative_m'])
+    #altitudes_absolute_m = np.array(h5file[video_filename]['position']['altitude_absolute_m'])
+    
+    # Estimate the horizontal and vertical speeds.
+    (x_m, y_m) = gps_to_distance(longitudes, latitudes, units='m')
+    z_m = altitudes_relative_m
+    (_, x_m) = moving_average(timestamps_s, x_m, speed_moving_average_window_duration_s, 'centered')
+    (_, y_m) = moving_average(timestamps_s, y_m, speed_moving_average_window_duration_s, 'centered')
+    (_, z_m) = moving_average(timestamps_s, z_m, speed_moving_average_window_duration_s, 'centered')
+    dx_m = np.diff(x_m)
+    dy_m = np.diff(y_m)
+    dz_m = np.diff(z_m)
+    dt_s = np.diff(timestamps_s)
+    speed_horizontal_m_s = np.sqrt(np.square(dx_m) + np.square(dy_m))/dt_s
+    speed_horizontal_m_s = np.insert(speed_horizontal_m_s, 0, speed_horizontal_m_s[0])
+    is_stationary_horizontal = speed_horizontal_m_s <= stationary_speed_threshold_m_s
+    speed_vertical_m_s = np.sqrt(np.square(dz_m))/dt_s
+    speed_vertical_m_s = np.insert(speed_vertical_m_s, 0, speed_vertical_m_s[0])
+    is_stationary_vertical = speed_vertical_m_s <= stationary_speed_threshold_m_s
+  
+###########################################################################
+# Helper methods for converting between epoch time and human-readable time.
+###########################################################################
 
 # Specify the time zone offset to get local time of this data collection day from UTC.
 # These can be provided to the below helper functions.
 localtime_offset_s = -4*3600
 localtime_offset_str = '-0400'
-
-# Convert time as seconds since epoch to a human-readable string.
-# timezone_offset_s is offset to add to time_s to convert from local time to UTC time.
-# timezone_offset_str is the offset string in format HHMM, and may be negative.
-# For example, for Eastern Daylight Time which is UTC-4:
-#   timezone_offset_s = -14400
-#   timezone_offset_str = '-0400'
-def time_s_to_str(time_s, timezone_offset_s=0, timezone_offset_str=''):
-  # Get "UTC" time, which is actually local time because we will do the timezone offset first.
-  time_datetime = datetime.utcfromtimestamp(time_s + timezone_offset_s)
-  # Format the string then add the local offset string.
-  return time_datetime.strftime('%%Y-%%m-%%d %%H:%%M:%%S.%%f %s' % timezone_offset_str)
-
-# Convert from a human-readable time string to time as seconds since epoch.
-# The time string should include a timezone offset if applicable, for example '0400' for EDT.
-def time_str_to_time_s(time_str):
-  time_datetime = dateutil.parser.parse(time_str)
-  return time_datetime.timestamp()
 
 # Do an example conversion.
 example_epoch_time_s = timestamps_s[0]

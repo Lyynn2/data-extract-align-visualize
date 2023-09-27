@@ -41,7 +41,7 @@ from helpers_various import *
 ##############################################################
 
 # Specify the filepath for each drone's HDF5 file of metadata.
-data_root_dir = 'C:/Users/jdelp/Desktop/_whale_birthday_s3_data'
+data_root_dir = 'path_to_data_root_folder'
 drone_metadata_filepaths = OrderedDict([
   # Map from device ID to its HDF5 filepath.
   ('DSWP-DJI_MAVIC3-2', os.path.join(data_root_dir, 'DSWP-DJI_MAVIC3-2', 'DSWP-DJI_MAVIC3-2_metadata.hdf5')),
@@ -128,7 +128,7 @@ for device_id in all_times_s:
     longitudes = all_longitudes[device_id][file_index]
     latitudes = all_latitudes[device_id][file_index]
     # Estimate the speed.
-    (x_m, y_m) = gps_to_m(longitudes, latitudes)
+    (x_m, y_m) = gps_to_distance(longitudes, latitudes, units='m')
     (_, x_m) = moving_average(time_s, x_m, speed_moving_average_window_duration_s, 'centered')
     (_, y_m) = moving_average(time_s, y_m, speed_moving_average_window_duration_s, 'centered')
     dx_m = np.diff(x_m)
