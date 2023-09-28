@@ -1,4 +1,12 @@
 
+# Setup: Organizing Data
+
+Most scripts have a variable at the beginning called `data_root_dir`.  This should point to a folder that is analogous to the AWS folder `ceti-data > raw > 2023-07-08`.  It should have a subfolder for each device that you want to use, which is named according to the device ID.  
+
+If you want to use coda annotations, the root folder should have subfolders called `_coda_annotations_biology` and `_coda_annotations_haifa` with a CSV in each one; these might be available on AWS, and just in case they're also available [here](https://drive.google.com/drive/folders/1o6aclfZT1td0Xjm15IKLw7Pj57yaxBNU?usp=sharing).
+
+If you want to use the scripts that use extracted files of drone data (`example_use_drone_data.py`, `drone_plot_gps.py`, `drone_plot_speed.py`), you can download the HDF5 files from [here](https://drive.google.com/drive/folders/1VRa-VetmZ5YfDLSZ_6jQgG1d_zl_QoxG?usp=drive_link).  You can then place each one in the relevant drone data subfolder of the data root folder, or adjust the filepaths at the top of the scripts.
+
 # Examples of Extracting Timestamped Data
 
 `example_get_audio_with_timestamps.py` 
@@ -54,12 +62,16 @@
   - `get_timestamped_data_codas()` 
   - `get_timestamped_data_drones()` (but note that the HDF5 files mentioned above are recommended, since they include both aligned and original timestamps as well as other formatted fields)
 
-## Subclasses
+## Subclasses for Faster Video Plotting and Writing
 
 - `ImagePlot` is a custom plotting class to speed up plotting for video generation.  It builds plot images directly instead of using a plotting library, so it is fast for basic functions and does not require a dedicated export/render step to fetch an image of the plot.
+
+
 - `ThreadedVideoWriter` is a video writer wrapper to speed up video writing.  It maintains a rolling buffer of frames to write and then performs the actual write in a dedicated thread, so your main code can continue working on synthesizing the next frame while the previous frame is being written.
 
-# Installation
+
+
+# Python Setup/Installation
 
 The code has so far been run with Python version `3.9.9`. Versions of notable packages that the code has currently been tested with are listed below:
 
